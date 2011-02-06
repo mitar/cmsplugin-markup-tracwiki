@@ -1,255 +1,156 @@
 import os
 from StringIO import StringIO
 
-from trac import env
-from trac import core
-from trac import config
+from genshi.builder import tag
+
+from trac.core import *
+
 from trac import mimeview
-from trac import util
-from trac.wiki import formatter
-
-try:
-    from babel import Locale
-except ImportError:
-    Locale = None
-
-from trac.ticket.default_workflow import load_workflow_config_snippet
-
-def get_dburi():
-    if os.environ.has_key('TRAC_TEST_DB_URI'):
-        dburi = os.environ['TRAC_TEST_DB_URI']
-        if dburi:
-            scheme, db_prop = _parse_db_str(dburi)
-            # Assume the schema 'tractest' for Postgres
-            if scheme == 'postgres' and \
-                    not db_prop.get('params', {}).get('schema'):
-                if '?' in dburi:
-                    dburi += "&schema=tractest"
-                else:
-                    dburi += "?schema=tractest"
-            return dburi
-    return 'sqlite:db/trac.db'
-
-from trac.db.sqlite_backend import SQLiteConnection
-
-class InMemoryDatabase(SQLiteConnection):
-    """
-    DB-API connection object for an SQLite in-memory database, containing all
-    the default Trac tables but no data.
-    """
-    def __init__(self):
-        SQLiteConnection.__init__(self, ':memory:')
-        cursor = self.cnx.cursor()
-
-        from trac.db_default import schema
-        from trac.db.sqlite_backend import _to_sql
-        for table in schema:
-            for stmt in _to_sql(table):
-                cursor.execute(stmt)
-
-        self.cnx.commit()
-
-class DjangoEnvironment(env.Environment):
-    """A Django environment for Trac."""
-    
-    href = abs_href = None
-    dbenv = db = None
-    
-    def __init__(self, default_data=False, enable=None):
-        core.ComponentManager.__init__(self)
-        core.Component.__init__(self)
-        self.systeminfo = []
-        
-        import trac
-        self.path = os.path.dirname(trac.__file__)
-        if not os.path.isabs(self.path):
-            self.path = os.path.join(os.getcwd(), self.path)
-
-        self.config = config.Configuration(None)
-        # We have to have a ticket-workflow config for ''lots'' of things to
-        # work.  So insert the basic-workflow config here.  There may be a
-        # better solution than this.
-        load_workflow_config_snippet(self.config, 'basic-workflow.ini')
-        self.config.set('logging', 'log_level', 'DEBUG')
-        self.config.set('logging', 'log_type', 'stderr')
-        if enable is not None:
-            self.config.set('components', 'trac.*', 'disabled')
-        for name_or_class in enable or ():
-            config_key = self._component_name(name_or_class)
-            self.config.set('components', config_key, 'enabled')
-
-        # -- logging
-        from trac.log import logger_handler_factory
-        self.log, self._log_handler = logger_handler_factory('test')
-
-        # -- database
-        self.dburi = get_dburi()
-        if self.dburi.startswith('sqlite'):
-            self.config.set('trac', 'database', 'sqlite::memory:')
-            self.db = InMemoryDatabase()
-
-        if default_data:
-            self.reset_db(default_data)
-
-        from trac.web.href import Href
-        self.href = Href('/trac.cgi')
-        self.abs_href = Href('http://example.org/trac.cgi')
-
-        self.known_users = []
-        util.translation.activate(Locale and Locale('en', 'US'))
-
-    def get_read_db(self):
-        return self.get_db_cnx()
-    
-    def get_db_cnx(self, destroying=False):
-        if self.db:
-            return self.db # in-memory SQLite
-
-        # As most of the EnvironmentStubs are built at startup during
-        # the test suite formation and the creation of test cases, we can't
-        # afford to create a real db connection for each instance.
-        # So we create a special EnvironmentStub instance in charge of
-        # getting the db connections for all the other instances.
-        dbenv = DjangoEnvironment.dbenv
-        if not dbenv:
-            dbenv = EnvironmentStub.dbenv = DjangoEnvironment()
-            dbenv.config.set('trac', 'database', self.dburi)
-            if not destroying:
-                self.reset_db() # make sure we get rid of previous garbage
-        return DatabaseManager(dbenv).get_connection()
-
-    def reset_db(self, default_data=None):
-        """Remove all data from Trac tables, keeping the tables themselves.
-        :param default_data: after clean-up, initialize with default data
-        :return: True upon success
-        """
-        from trac import db_default
-        if DjangoEnvironment.dbenv:
-            db = self.get_db_cnx()
-            scheme, db_prop = _parse_db_str(self.dburi)
-
-            tables = []
-            db.rollback() # make sure there's no transaction in progress
-            try:
-                # check the database version
-                cursor = db.cursor()
-                cursor.execute("SELECT value FROM system "
-                               "WHERE name='database_version'")
-                database_version = cursor.fetchone()
-                if database_version:
-                    database_version = int(database_version[0])
-                if database_version == db_default.db_version:
-                    # same version, simply clear the tables (faster)
-                    m = sys.modules[__name__]
-                    reset_fn = 'reset_%s_db' % scheme
-                    if hasattr(m, reset_fn):
-                        tables = getattr(m, reset_fn)(db, db_prop)
-                else:
-                    # different version or version unknown, drop the tables
-                    self.destroy_db(scheme, db_prop)
-            except:
-                db.rollback()
-                # tables are likely missing
-
-            if not tables:
-                del db
-                dm = DatabaseManager(DjangoEnvironment.dbenv)
-                dm.init_db()
-                # we need to make sure the next get_db_cnx() will re-create 
-                # a new connection aware of the new data model - see #8518.
-                dm.shutdown() 
-
-        db = self.get_db_cnx()
-        cursor = db.cursor()
-        if default_data:
-            for table, cols, vals in db_default.get_data(db):
-                cursor.executemany("INSERT INTO %s (%s) VALUES (%s)"
-                                   % (table, ','.join(cols),
-                                      ','.join(['%s' for c in cols])),
-                                   vals)
-        elif DjangoEnvironment.dbenv:
-            cursor.execute("INSERT INTO system (name, value) "
-                           "VALUES (%s, %s)",
-                           ('database_version', str(db_default.db_version)))
-        db.commit()
-
-    def destroy_db(self, scheme=None, db_prop=None):
-        if not (scheme and db_prop):
-            scheme, db_prop = _parse_db_str(self.dburi)
-
-        db = self.get_db_cnx(destroying=True)
-        cursor = db.cursor()
-        try:
-            if scheme == 'postgres' and db.schema:
-                cursor.execute('DROP SCHEMA "%s" CASCADE' % db.schema)
-            elif scheme == 'mysql':
-                dbname = os.path.basename(db_prop['path'])
-                cursor = db.cursor()
-                cursor.execute('SELECT table_name FROM '
-                               '  information_schema.tables '
-                               'WHERE table_schema=%s', (dbname,))
-                tables = cursor.fetchall()
-                for t in tables:
-                    cursor.execute('DROP TABLE IF EXISTS `%s`' % t)
-            db.commit()
-        except Exception:
-            db.rollback()
-
-    def get_known_users(self, cnx=None):
-        return self.known_users
-
-def write(self, data):
-    if not data:
-        return
-    sys.stderr.write(data)
-    sys.stderr.write("\n")
-
-def start_response(status, headers, exc_info):
-    if exc_info:
-        raise exc_info[0], exc_info[1], exc_info[2]
-    sys.stderr.write("Trac rasponse data, %s:\n", status)
-    return write
-
+from trac import test
 from trac import resource
 from trac import web
+from trac import wiki
 from trac.web import main
 
-class FullPerm(dict):
-    def require(self, *args):
-        return True
+components = [
+    'trac.wiki.macros.MacroListMacro',
+    'wiki.DjangoResource',
+]
+
+class DjangoEnvironment(test.EnvironmentStub):
+    """A Django environment for Trac."""
     
-    def __call__(self, *args):
-        return self
+    def __init__(self):
+        super(DjangoEnvironment, self).__init__(enable=components)
+        
+        for c in components:
+            module_and_class = c.rsplit('.', 1)
+            if len(module_and_class) == 1:
+                __import__(name=module_and_class[0])
+            else:
+                __import__(name=module_and_class[0], fromlist=[module_and_class[1]])
+        
+        # TODO: Configure with Django sites
+        self.href = web.href.Href('/')
+        self.abs_href = web.href.Href('http://localhost/')
 
-env = DjangoEnvironment()
-environ = {
-    'SERVER_PORT': 80,
-    'wsgi.url_scheme': 'http',
-    'SERVER_NAME': 'localhost',
-}
-request = web.Request(environ, start_response)
-request.perm = FullPerm()
-request.sesion = main.FakeSession()
+        # TODO: Use Django logging facilities?
+        # TODO: Sync activated locales with Django?
 
-#.callbacks.update({
-    #'authname': self.authenticate,
-    #'chrome': chrome.prepare_request,
-    #'hdf': self._get_hdf,
-    #'locale': self._get_locale,
-    #'tz': self._get_timezone,
-    #'form_token': self._get_form_token,
-#})
+class DjangoRequest(web.Request):
+    def __init__(self):
+        # TODO: Get from real the request
+        environ = {
+            'SERVER_PORT': 80,
+            'wsgi.url_scheme': 'http',
+            'SERVER_NAME': 'localhost',
+        }
+        
+        super(DjangoRequest, self).__init__(environ, self._start_response)
+        
+        self.perm = main.FakePerm()
+        self.sesion = main.FakeSession()
+            
+        #'authname': self.authenticate,
+        #'chrome': chrome.prepare_request,
+        #'hdf': self._get_hdf,
+        #'locale': self._get_locale,
+        #'tz': self._get_timezone,
+        #'form_token': self._get_form_token,
+    
+    def _write(self, data):
+        if not data:
+            return
+        sys.stderr.write(data)
+        sys.stderr.write("\n")
+    
+    def _start_response(self, status, headers, exc_info):
+        if exc_info:
+            raise exc_info[0], exc_info[1], exc_info[2]
+        sys.stderr.write("Trac rasponse data, %s:\n", status)
+        return self._write
 
-class DjangoFormatter(formatter.Formatter):
+class DjangoFormatter(wiki.formatter.Formatter):
     def _parse_heading(self, match, fullmatch, shorten):
         (depth, heading, anchor) = super(DjangoFormatter, self)._parse_heading(match, fullmatch, shorten)
         depth = min(depth + 1, 6)
         return (depth, heading, anchor)
+    
+    def _make_lhref_link(self, match, fullmatch, rel, ns, target, label):
+        """We override _make_lhref_link to make 'cms' namespace default."""
+        return super(DjangoFormatter, self)._make_lhref_link(match, fullmatch, rel, ns or 'cms', target, label)
 
-resource = resource.Resource('django')
-context = mimeview.Context.from_request(request, resource)
-out = StringIO()
-DjangoFormatter(env, context).format("= Foo =\n[wiki:foo]\n[django:foo]\n[[MacroList]]\n`bar`", out)
-print out.getvalue()
+class DjangoResource(Component):
+    implements(resource.IResourceManager, wiki.IWikiSyntaxProvider)
+    
+    def _format_link(self, formatter, ns, target, label, fullmatch=None):
+        link, params, fragment = formatter.split_link(target)
+        page = resource.Resource('cms', link)
+        href = resource.get_resource_url(self.env, page, formatter.href)
+        title = resource.get_resource_name(self.env, page)
+        return tag.a(label, title=title, href=href + params + fragment)
+    
+    # IResourceManager methods
+    
+    def get_resource_realms(self):
+        yield 'cms'
+    
+    # TODO: Define get_resource_url which can work also on Django CMS page names (so that links can survive moving pages around)
+    # TODO: Check if it has to end with /
+    # TODO: Revert Django URL
+    def get_resource_url(self, resource, href, **kwargs):
+        if resource.id:
+            path = resource.id.split('/')
+        else:
+            path = []
+        return href(*path, **kwargs)
+    
+    def get_resource_description(self, resource, format='default', context=None, **kwargs):
+        # TODO: Return page name
+        return 'Name'
+    
+    # TODO: Check if it has to end with /
+    def resource_exists(self, resource):
+        return True
+    
+    # IWikiSyntaxProvider methods
+    
+    def get_wiki_syntax(self):
+        def cmspagename_with_label_link(formatter, match, fullmatch):
+            target = formatter._unquote(fullmatch.group('cms_target'))
+            label = fullmatch.group('cms_label')
+            link, params, fragment = formatter.split_link(target)
+            exist = resource.resource_exists(self.env, resource.Resource('cms', link))
+            if exist is None:
+                return match
+            elif exist:
+                return self._format_link(formatter, 'cms', target, label.strip(), fullmatch)
+            else:
+                tag.a(label + '?', class_='missing', href=target, rel='nofollow')
 
-#abs_ref, href = (req or env).abs_href, (req or env).href
+        yield (r"!?\[(?P<cms_target>%s|[^/\s]\S*)\s+(?P<cms_label>%s|[^\]]+)\]" % (wiki.parser.WikiParser.QUOTED_STRING, wiki.parser.WikiParser.QUOTED_STRING), cmspagename_with_label_link)
+
+    def get_link_resolvers(self):
+        yield ('cms', self._format_link)
+
+if __name__ == '__main__':
+    env = DjangoEnvironment()
+    req = DjangoRequest()
+    res = resource.Resource('cms', 'test') # TODO: Get ID from request (and version?)
+    ctx = mimeview.Context.from_request(req, res)
+    out = StringIO()
+    DjangoFormatter(env, ctx).format("""
+    = Foo =
+    [SandBox the sandbox]
+    [/SandBox the sandbox]
+    [efoo]
+    ["fd fo" df dfd d]
+    [wiki:wfoo]
+    [cms:foo/]
+    [cms:bla/pfoo?test#bla]
+    [..]
+    [cms:foo Foo]
+    `bar`
+    [[MacroList]]
+    """, out)
+    print out.getvalue()
