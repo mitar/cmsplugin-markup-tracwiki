@@ -14,7 +14,7 @@ from trac.web import main
 
 components = [
     'trac.wiki.macros.MacroListMacro',
-    'wiki.DjangoResource',
+    'cmsplugin_markup_tracwiki.tracwiki.DjangoResource',
 ]
 
 class DjangoEnvironment(test.EnvironmentStub):
@@ -133,24 +133,17 @@ class DjangoResource(Component):
     def get_link_resolvers(self):
         yield ('cms', self._format_link)
 
-if __name__ == '__main__':
-    env = DjangoEnvironment()
-    req = DjangoRequest()
-    res = resource.Resource('cms', 'test') # TODO: Get ID from request (and version?)
-    ctx = mimeview.Context.from_request(req, res)
-    out = StringIO()
-    DjangoFormatter(env, ctx).format("""
-    = Foo =
-    [SandBox the sandbox]
-    [/SandBox the sandbox]
-    [efoo]
-    ["fd fo" df dfd d]
-    [wiki:wfoo]
-    [cms:foo/]
-    [cms:bla/pfoo?test#bla]
-    [..]
-    [cms:foo Foo]
-    `bar`
-    [[MacroList]]
-    """, out)
-    print out.getvalue()
+class Markup(object):
+    name = 'Trac wiki'
+    identifier = 'tracwiki'
+
+    def __init__(self, *args, **kwargs):
+        self.env = DjangoEnvironment()
+
+    def parse(self, value):
+        req = DjangoRequest()
+        res = resource.Resource('cms', 'test') # TODO: Get ID from request (and version?)
+        ctx = mimeview.Context.from_request(req, res)
+        out = StringIO()
+        DjangoFormatter(env, ctx).format(value, out)
+        return out.getvalue()
