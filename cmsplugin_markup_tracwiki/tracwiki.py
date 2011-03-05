@@ -1,4 +1,6 @@
 import os
+import inspect
+
 from StringIO import StringIO
 
 from genshi.builder import tag
@@ -10,12 +12,22 @@ from trac import test
 from trac import resource
 from trac import web
 from trac import wiki
+from trac.util import datefmt, translation as trac_translation
 from trac.web import main
+
+from django.contrib.sites import models as sites_models
+from django.core import urlresolvers
+from django.utils import translation as django_translation
 
 components = [
     'trac.wiki.macros.MacroListMacro',
+    'trac.wiki.macros.KnownMimeTypesMacro',
+    'trac.wiki.macros.ImageMacro',
+    'trac.wiki.macros.PageOutlineMacro',
     'cmsplugin_markup_tracwiki.tracwiki.DjangoResource',
 ]
+
+TRACWIKI_HEADER_OFFSET = 1
 
 class DjangoEnvironment(test.EnvironmentStub):
     """A Django environment for Trac."""
@@ -29,51 +41,75 @@ class DjangoEnvironment(test.EnvironmentStub):
                 __import__(name=module_and_class[0])
             else:
                 __import__(name=module_and_class[0], fromlist=[module_and_class[1]])
-        
-        # TODO: Configure with Django sites
-        self.href = web.href.Href('/')
-        self.abs_href = web.href.Href('http://localhost/')
 
+        self.href = web.href.Href(urlresolvers.reverse('pages-root'))
+       
         # TODO: Use Django logging facilities?
         # TODO: Sync activated locales with Django?
 
+    def set_abs_href(self, request):
+        site = sites_models.Site.objects.get_current() if sites_models.Site._meta.installed else sites_models.RequestSite(request)
+
+        server_port = request.META.get('SERVER_PORT', '80')
+        if request.is_secure():
+            self.abs_href = web.href.Href('https://' + site.domain + (':' + server_port if server_port != '443' else '') + self.href())
+        else:
+            self.abs_href = web.href.Href('http://' + site.domain + (':' + server_port if server_port != '80' else '') + self.href())
+
 class DjangoRequest(web.Request):
-    def __init__(self):
-        # TODO: Get from real the request
-        environ = {
-            'SERVER_PORT': 80,
-            'wsgi.url_scheme': 'http',
-            'SERVER_NAME': 'localhost',
-        }
-        
-        super(DjangoRequest, self).__init__(environ, self._start_response)
+    def __init__(self, request):
+        super(DjangoRequest, self).__init__(request.META, self._start_response)
+
+        self.django_request = request
         
         self.perm = main.FakePerm()
-        self.sesion = main.FakeSession()
-            
-        #'authname': self.authenticate,
-        #'chrome': chrome.prepare_request,
-        #'hdf': self._get_hdf,
-        #'locale': self._get_locale,
-        #'tz': self._get_timezone,
-        #'form_token': self._get_form_token,
-    
+        self.session = main.FakeSession()
+
+        if request.user.is_authenticated():
+            self.session['name'] = request.user.get_full_name()
+            self.session['email'] = request.user.email
+
+        self.callbacks.update({
+            'authname': self._get_authname,
+            'tz': self._get_timezone,
+            'locale': self._get_locale,
+        })
+   
+    def _get_authname(self, req):
+        if self.django_request.user.is_authenticated():
+            return self.django_request.user.username
+        else:
+            return 'anonymous'
+
+    def _get_locale(self, req):
+        if trac_translation.has_babel:
+            return trac_translation.get_negotiated_locale([django_translation.get_language()])
+
+    def _get_timezone(self, req):
+        # Django sets TZ environment variable
+        return datefmt.localtz
+
     def _write(self, data):
         if not data:
             return
+
+        # TODO: Use Django logging facilities?
         sys.stderr.write(data)
         sys.stderr.write("\n")
     
     def _start_response(self, status, headers, exc_info):
         if exc_info:
             raise exc_info[0], exc_info[1], exc_info[2]
+
+        # TODO: Use Django logging facilities?
         sys.stderr.write("Trac rasponse data, %s:\n", status)
+
         return self._write
 
 class DjangoFormatter(wiki.formatter.Formatter):
     def _parse_heading(self, match, fullmatch, shorten):
         (depth, heading, anchor) = super(DjangoFormatter, self)._parse_heading(match, fullmatch, shorten)
-        depth = min(depth + 1, 6)
+        depth = min(depth + TRACWIKI_HEADER_OFFSET, 6)
         return (depth, heading, anchor)
     
     def _make_lhref_link(self, match, fullmatch, rel, ns, target, label):
@@ -133,6 +169,10 @@ class DjangoResource(Component):
     def get_link_resolvers(self):
         yield ('cms', self._format_link)
 
+# TODO: Use content from filer for [[Image]] and attachments
+# TODO: Why is [cms:foo Foo] not rendered correctly?
+# TODO: Relative links [..] should traverse Django CMS hierarchy
+
 class Markup(object):
     name = 'Trac wiki'
     identifier = 'tracwiki'
@@ -140,10 +180,24 @@ class Markup(object):
     def __init__(self, *args, **kwargs):
         self.env = DjangoEnvironment()
 
+    def _get_request(self):
+        frame = inspect.currentframe()
+        try:
+            while frame.f_back:
+                frame = frame.f_back
+                request = frame.f_locals.get('request')
+                if request:
+                    return request
+        finally:
+            del frame
+        return None
+
     def parse(self, value):
-        req = DjangoRequest()
+        request = self._get_request()
+        self.env.set_abs_href(request)
+        req = DjangoRequest(request)
         res = resource.Resource('cms', 'test') # TODO: Get ID from request (and version?)
         ctx = mimeview.Context.from_request(req, res)
         out = StringIO()
-        DjangoFormatter(env, ctx).format(value, out)
+        DjangoFormatter(self.env, ctx).format(value, out)
         return out.getvalue()
