@@ -152,26 +152,15 @@ class DjangoResource(Component):
     # IWikiSyntaxProvider methods
     
     def get_wiki_syntax(self):
-        def cmspagename_with_label_link(formatter, match, fullmatch):
-            target = formatter._unquote(fullmatch.group('cms_target'))
-            label = fullmatch.group('cms_label')
-            link, params, fragment = formatter.split_link(target)
-            exist = resource.resource_exists(self.env, resource.Resource('cms', link))
-            if exist is None:
-                return match
-            elif exist:
-                return self._format_link(formatter, 'cms', target, label.strip(), fullmatch)
-            else:
-                tag.a(label + '?', class_='missing', href=target, rel='nofollow')
-
-        yield (r"!?\[(?P<cms_target>%s|[^/\s]\S*)\s+(?P<cms_label>%s|[^\]]+)\]" % (wiki.parser.WikiParser.QUOTED_STRING, wiki.parser.WikiParser.QUOTED_STRING), cmspagename_with_label_link)
-
+        return
+    
     def get_link_resolvers(self):
         yield ('cms', self._format_link)
 
-# TODO: Use content from filer for [[Image]] and attachments
-# TODO: Why is [cms:foo Foo] not rendered correctly?
+# TODO: Use content from filer for [[Image]] and attachments (attachments could be file and image plugins in the same placeholder)
 # TODO: Relative links [..] should traverse Django CMS hierarchy
+# TODO: Make Trac and Django CMS caching interoperate (how does dynamic macros currently behave?)
+# TODO: Does request really have URL we want (for example in admin URL is not the URL of a resulting page)
 
 class Markup(object):
     name = 'Trac wiki'
