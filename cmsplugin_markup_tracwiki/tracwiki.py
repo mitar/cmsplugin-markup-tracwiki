@@ -19,6 +19,10 @@ from django.contrib.sites import models as sites_models
 from django.core import urlresolvers
 from django.utils import translation as django_translation
 
+from cms import models as cms_models
+from cms import utils as cms_utils
+from cms.utils import moderator
+
 components = [
     'trac.wiki.macros.MacroListMacro',
     'trac.wiki.macros.KnownMimeTypesMacro',
@@ -83,6 +87,7 @@ class DjangoRequest(web.Request):
 
     def _get_locale(self, req):
         if trac_translation.has_babel:
+            # TODO: Use django-cms function (get_language_from_request) instead? Why req is not used?
             return trac_translation.get_negotiated_locale([django_translation.get_language()])
 
     def _get_timezone(self, req):
@@ -135,32 +140,58 @@ class DjangoResource(Component):
         yield 'cms'
     
     def get_resource_url(self, res, href, **kwargs):
-        if res.id:
-            try:
-                link = urlresolvers.reverse(res.id)
-                args = [link]
-                if link.endswith('/'):
-                    # We add an empty link component at the end to force trailing slash
-                    args.append('')
-                return href(*args, **kwargs)
-            except urlresolvers.NoReverseMatch as e:
-                raise resource.ResourceNotFound(e)
-        else:
+        if not res.id:
             return href(**kwargs)
+        else:
+            try:
+                request = _get_django_request()
+                lang = cms_utils.get_language_from_request(request)
+                link = self._get_page(res.id).get_absolute_url(language=lang)
+            except cms_models.Page.DoesNotExist:
+                try:
+                    link = urlresolvers.reverse(res.id)
+                except urlresolvers.NoReverseMatch as e:
+                    raise resource.ResourceNotFound(e)
+
+            args = [link]
+            if link.endswith('/') and not link.strip('/') == '':
+                # We add an empty link component at the end to force trailing slash
+                args.append('')
+            return href(*args, **kwargs)
     
     def get_resource_description(self, res, format='default', context=None, **kwargs):
-        # TODO: Return page name
-        return 'Name'
+        if not res.id:
+            return ''
+        else:
+            try:
+                request = _get_django_request()
+                lang = cms_utils.get_language_from_request(request)
+                return self._get_page(res.id, context).get_title(language=lang)
+            except cms_models.Page.DoesNotExist:
+                return ''
     
     def resource_exists(self, res):
-        if res.id:
+        if not res.id:
+            return False
+        else:
+            try:
+                self._get_page(res.id)
+                return True
+            except cms_models.Page.DoesNotExist:
+                pass
+            
             try:
                 urlresolvers.reverse(res.id)
                 return True
             except urlresolvers.NoReverseMatch:
                 return False
+
+    def _get_page(self, page_id, context=None):
+        if context is not None:
+            request = context.req.django_request
         else:
-            return False
+            request = _get_django_request()
+        return moderator.get_page_queryset(request).get(reverse_id=page_id)
     
     # IWikiSyntaxProvider methods
     
@@ -183,20 +214,8 @@ class Markup(object):
     def __init__(self, *args, **kwargs):
         self.env = DjangoEnvironment()
 
-    def _get_request(self):
-        frame = inspect.currentframe()
-        try:
-            while frame.f_back:
-                frame = frame.f_back
-                request = frame.f_locals.get('request')
-                if request:
-                    return request
-        finally:
-            del frame
-        return None
-
     def parse(self, value):
-        request = self._get_request()
+        request = _get_django_request()
         self.env.set_abs_href(request)
         req = DjangoRequest(request)
         res = resource.Resource('cms', 'test') # TODO: Get ID from request (and version?)
@@ -204,3 +223,17 @@ class Markup(object):
         out = StringIO()
         DjangoFormatter(self.env, ctx).format(value, out)
         return out.getvalue()
+
+def _get_django_request():
+    frame = inspect.currentframe()
+    try:
+        while frame.f_back:
+            frame = frame.f_back
+            request = frame.f_locals.get('request')
+            if request:
+                # TODO: Check if it is really a Django request
+                return request
+    finally:
+        del frame
+    return None
+
