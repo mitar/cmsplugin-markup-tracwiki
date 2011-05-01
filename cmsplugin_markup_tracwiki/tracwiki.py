@@ -121,33 +121,46 @@ class DjangoResource(Component):
     
     def _format_link(self, formatter, ns, target, label, fullmatch=None):
         link, params, fragment = formatter.split_link(target)
-        page = resource.Resource('cms', link)
-        href = resource.get_resource_url(self.env, page, formatter.href)
-        title = resource.get_resource_name(self.env, page)
-        return tag.a(label, title=title, href=href + params + fragment)
+        page = resource.Resource(ns, link)
+        try:
+            href = resource.get_resource_url(self.env, page, formatter.href)
+            title = resource.get_resource_name(self.env, page)
+            return tag.a(label, title=title, href=href + params + fragment)
+        except resource.ResourceNotFound:
+            return tag.a(label + '?', class_='missing', href=target, rel='nofollow')
     
     # IResourceManager methods
     
     def get_resource_realms(self):
         yield 'cms'
     
-    # TODO: Define get_resource_url which can work also on Django CMS page names (so that links can survive moving pages around)
-    # TODO: Check if it has to end with /
-    # TODO: Revert Django URL
-    def get_resource_url(self, resource, href, **kwargs):
-        if resource.id:
-            path = resource.id.split('/')
+    def get_resource_url(self, res, href, **kwargs):
+        if res.id:
+            try:
+                link = urlresolvers.reverse(res.id)
+                args = [link]
+                if link.endswith('/'):
+                    # We add an empty link component at the end to force trailing slash
+                    args.append('')
+                return href(*args, **kwargs)
+            except urlresolvers.NoReverseMatch as e:
+                raise resource.ResourceNotFound(e)
         else:
-            path = []
-        return href(*path, **kwargs)
+            return href(**kwargs)
     
-    def get_resource_description(self, resource, format='default', context=None, **kwargs):
+    def get_resource_description(self, res, format='default', context=None, **kwargs):
         # TODO: Return page name
         return 'Name'
     
-    # TODO: Check if it has to end with /
-    def resource_exists(self, resource):
-        return True
+    def resource_exists(self, res):
+        if res.id:
+            try:
+                urlresolvers.reverse(res.id)
+                return True
+            except urlresolvers.NoReverseMatch:
+                return False
+        else:
+            return False
     
     # IWikiSyntaxProvider methods
     
@@ -161,6 +174,7 @@ class DjangoResource(Component):
 # TODO: Relative links [..] should traverse Django CMS hierarchy
 # TODO: Make Trac and Django CMS caching interoperate (how does dynamic macros currently behave?)
 # TODO: Does request really have URL we want (for example in admin URL is not the URL of a resulting page)
+# TODO: Wrap some Django template tags into macros (url for example)
 
 class Markup(object):
     name = 'Trac wiki'
