@@ -140,7 +140,7 @@ class DjangoResource(Component):
         yield 'cms'
     
     def get_resource_url(self, res, href, **kwargs):
-        if not res.id:
+        if res.id is None:
             return href(**kwargs)
         else:
             try:
@@ -149,6 +149,9 @@ class DjangoResource(Component):
                 link = self._get_page(res.id).get_absolute_url(language=lang)
             except cms_models.Page.DoesNotExist:
                 try:
+                    # Test again as request.current_page could be None
+                    if not res.id:
+                        return href(**kwargs)
                     link = urlresolvers.reverse(res.id)
                 except urlresolvers.NoReverseMatch as e:
                     raise resource.ResourceNotFound(e)
@@ -160,7 +163,7 @@ class DjangoResource(Component):
             return href(*args, **kwargs)
     
     def get_resource_description(self, res, format='default', context=None, **kwargs):
-        if not res.id:
+        if res.id is None:
             return ''
         else:
             try:
@@ -171,7 +174,7 @@ class DjangoResource(Component):
                 return ''
     
     def resource_exists(self, res):
-        if not res.id:
+        if res.id is None:
             return False
         else:
             try:
@@ -179,6 +182,10 @@ class DjangoResource(Component):
                 return True
             except cms_models.Page.DoesNotExist:
                 pass
+
+            # Test again as request.current_page could be None
+            if not res.id:
+                return False
             
             try:
                 urlresolvers.reverse(res.id)
@@ -191,7 +198,17 @@ class DjangoResource(Component):
             request = context.req.django_request
         else:
             request = _get_django_request()
-        return moderator.get_page_queryset(request).get(reverse_id=page_id)
+        if not page_id:
+            # cms.middleware.page.CurrentPageMiddleware is required for this
+            if request.current_page:
+                return request.current_page
+            else:
+                # It is not really necessary that current page is known
+                # TODO: Check what happens on blog
+                # TODO: Check what happens with preview
+                raise cms_models.Page.DoesNotExist()
+        else:
+            return moderator.get_page_queryset(request).get(reverse_id=page_id)
     
     # IWikiSyntaxProvider methods
     
