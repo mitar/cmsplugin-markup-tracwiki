@@ -29,6 +29,8 @@ components = [
     'trac.wiki.macros.ImageMacro',
     'trac.wiki.macros.PageOutlineMacro',
     'cmsplugin_markup_tracwiki.tracwiki.DjangoResource',
+    'cmsplugin_markup_tracwiki.macros.URLMacro',
+    'cmsplugin_markup_tracwiki.macros.NowMacro',
 ]
 
 TRACWIKI_HEADER_OFFSET = 1
@@ -220,11 +222,14 @@ class DjangoResource(Component):
     def get_link_resolvers(self):
         yield ('cms', self._format_link)
 
-# TODO: Use content from filer for [[Image]] and attachments (attachments could be file and image plugins in the same placeholder)
+# TODO: Add a filer namespace (what should be the key by which to relate to the file?)
+# TODO: Make a macro similar to [[Image]] but which uses filer, but should also support thumbnail tag (or do another one for that?)
+# TODO: In admin some GUI way to select files/images from filer should be made (one to select (file) URL, the other to select [[Image]] macro), similar to how integration with rich-text editor is made
 # TODO: Relative links [..] should traverse Django CMS hierarchy
 # TODO: Make Trac and Django CMS caching interoperate (how does dynamic macros currently behave?)
 # TODO: Does request really have URL we want (for example in admin URL is not the URL of a resulting page)
-# TODO: Wrap some Django template tags into macros (url for example)
+# TODO: Do we really need to use href() or should we just use Django URLs directly (as we configure href() with Django base URL anyway)
+# TODO: When using django-reversion, add an option to compare versions of plugin content and display it in the same way as Trac does
 
 class Markup(object):
     name = 'Trac wiki'
