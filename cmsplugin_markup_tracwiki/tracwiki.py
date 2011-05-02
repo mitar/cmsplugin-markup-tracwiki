@@ -203,10 +203,12 @@ class DjangoResource(Component):
             if request.current_page:
                 return request.current_page
             else:
-                # It is not really necessary that current page is known
-                # TODO: Check what happens on blog
-                # TODO: Check what happens with preview
-                raise cms_models.Page.DoesNotExist()
+                # It is not really necessary that the current page is known as plugins can be rendered also outside of pages (like in preview view in admin)
+                # TODO: Check what happens on blog (also in preview there as we use request.current_page in preview template)
+                if request.POST['page_id']:
+                    return moderator.get_page_queryset(request).get(pk=request.POST['page_id'])
+                else:
+                    raise cms_models.Page.DoesNotExist()
         else:
             return moderator.get_page_queryset(request).get(reverse_id=page_id)
     
