@@ -17,11 +17,14 @@ from trac.web import main
 
 from django.contrib.sites import models as sites_models
 from django.core import urlresolvers
+from django.db.models import Q
 from django.utils import translation as django_translation
 
 from cms import models as cms_models
 from cms import utils as cms_utils
 from cms.utils import moderator
+
+from filer.models import filemodels as filer_models
 
 components = [
     'trac.wiki.macros.MacroListMacro',
@@ -140,11 +143,17 @@ class DjangoResource(Component):
     
     def get_resource_realms(self):
         yield 'cms'
+        yield 'filer'
     
     def get_resource_url(self, res, href, **kwargs):
-        if res.id is None:
+        if res.id is None or not res.realm:
             return href(**kwargs)
-        else:
+        elif res.realm == 'filer':
+            try:
+                link = self._get_file(res.id).url
+            except filer_models.File.DoesNotExist as e:
+                raise resource.ResourceNotFound(e)
+        elif res.realm == 'cms':
             try:
                 request = _get_django_request()
                 lang = cms_utils.get_language_from_request(request)
@@ -157,28 +166,40 @@ class DjangoResource(Component):
                     link = urlresolvers.reverse(res.id)
                 except urlresolvers.NoReverseMatch as e:
                     raise resource.ResourceNotFound(e)
-
-            args = [link]
-            if link.endswith('/') and not link.strip('/') == '':
-                # We add an empty link component at the end to force trailing slash
-                args.append('')
-            return href(*args, **kwargs)
+        else:
+            raise RuntimeError("This should be impossible")
+        
+        args = [link]
+        if link.endswith('/') and not link.strip('/') == '':
+            # We add an empty link component at the end to force trailing slash
+            args.append('')
+        return href(*args, **kwargs)
     
     def get_resource_description(self, res, format='default', context=None, **kwargs):
-        if res.id is None:
+        if res.id is None or not res.realm:
             return ''
-        else:
+        elif res.realm == 'filer':
+            return self._get_file(res.id, context).label
+        elif res.realm == 'cms':
             try:
                 request = _get_django_request()
                 lang = cms_utils.get_language_from_request(request)
                 return self._get_page(res.id, context).get_title(language=lang)
             except cms_models.Page.DoesNotExist:
                 return ''
+        else:
+            raise RuntimeError("This should be impossible")
     
     def resource_exists(self, res):
-        if res.id is None:
+        if res.id is None or not res.realm:
             return False
-        else:
+        elif res.realm == 'filer':
+            try:
+                self._get_file(res.id)
+                return True
+            except filer_models.File.DoesNotExist:
+                return False
+        elif res.realm == 'cms':
             try:
                 self._get_page(res.id)
                 return True
@@ -194,6 +215,8 @@ class DjangoResource(Component):
                 return True
             except urlresolvers.NoReverseMatch:
                 return False
+        else:
+            raise RuntimeError("This should be impossible")
 
     def _get_page(self, page_id, context=None):
         if context is not None:
@@ -213,6 +236,19 @@ class DjangoResource(Component):
                     raise cms_models.Page.DoesNotExist()
         else:
             return moderator.get_page_queryset(request).get(reverse_id=page_id)
+
+    def _get_file(self, file_id, context=None):
+        if not file_id:
+            raise filer_models.File.DoesNotExist()
+        if context is not None:
+            request = context.req.django_request
+        else:
+            request = _get_django_request()
+        f = filer_models.File.objects.get(Q(original_filename=file_id) | Q(name=file_id) | Q(sha1=file_id) | Q(file=file_id))
+        if f.is_public or f.has_read_permission(request):
+            return f
+        else:
+            raise filer_models.File.DoesNotExist()
     
     # IWikiSyntaxProvider methods
     
@@ -221,12 +257,13 @@ class DjangoResource(Component):
     
     def get_link_resolvers(self):
         yield ('cms', self._format_link)
+        yield ('filer', self._format_link)
 
-# TODO: Add a filer namespace (what should be the key by which to relate to the file?)
 # TODO: Make a macro similar to [[Image]] but which uses filer, but should also support thumbnail tag (or do another one for that?)
 # TODO: In admin some GUI way to select files/images from filer should be made (one to select (file) URL, the other to select [[Image]] macro), similar to how integration with rich-text editor is made
 # TODO: Relative links [..] should traverse Django CMS hierarchy
 # TODO: Make Trac and Django CMS caching interoperate (how does dynamic macros currently behave?)
+# TODO: Add an option to render the content everytime (for dynamic macros) or only on save (what currently happens)
 # TODO: Does request really have URL we want (for example in admin URL is not the URL of a resulting page)
 # TODO: Do we really need to use href() or should we just use Django URLs directly (as we configure href() with Django base URL anyway)
 # TODO: When using django-reversion, add an option to compare versions of plugin content and display it in the same way as Trac does
