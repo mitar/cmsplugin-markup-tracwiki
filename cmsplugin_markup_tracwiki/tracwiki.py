@@ -1,5 +1,6 @@
-import os
 import inspect
+import os
+import re
 
 from StringIO import StringIO
 
@@ -19,12 +20,18 @@ from django.contrib.sites import models as sites_models
 from django.core import urlresolvers
 from django.db.models import Q
 from django.utils import translation as django_translation
+from django.utils import safestring
 
 from cms import models as cms_models
 from cms import utils as cms_utils
 from cms.utils import moderator
 
 from filer.models import filemodels as filer_models
+
+from cmsplugin_markup import plugins as markup_plugins
+
+OBJ_ADMIN_RE_PATTERN = ur'\[\[CMSPlugin\(\s*(\d+)\s*\)\]\]'
+OBJ_ADMIN_RE = re.compile(OBJ_ADMIN_RE_PATTERN)
 
 components = [
     'trac.wiki.macros.MacroListMacro',
@@ -268,9 +275,10 @@ class DjangoResource(Component):
 # TODO: Do we really need to use href() or should we just use Django URLs directly (as we configure href() with Django base URL anyway)
 # TODO: When using django-reversion, add an option to compare versions of plugin content and display it in the same way as Trac does
 
-class Markup(object):
+class Markup(markup_plugins.MarkupBase):
     name = 'Trac wiki'
     identifier = 'tracwiki'
+    text_enabled_plugins = True
 
     def __init__(self, *args, **kwargs):
         self.env = DjangoEnvironment()
@@ -279,11 +287,34 @@ class Markup(object):
         request = _get_django_request()
         self.env.set_abs_href(request)
         req = DjangoRequest(request)
-        res = resource.Resource('cms', 'test') # TODO: Get ID from request (and version?)
+        res = resource.Resource('cms', 'pages-root') # TODO: Get ID from request (and version?)
         ctx = mimeview.Context.from_request(req, res)
         out = StringIO()
         DjangoFormatter(self.env, ctx).format(value, out)
         return out.getvalue()
+
+    def plugin_id_list(self, text):
+        return OBJ_ADMIN_RE.findall(text)
+
+    def replace_plugins(self, text, id_dict):
+        def _replace_tag(m):
+            plugin_id = int(m.groups()[0])
+            new_id = id_dict.get(plugin_id)
+            try:
+                obj = cms_models.CMSPlugin.objects.get(pk=new_id)
+            except cms_models.CMSPlugin.DoesNotExist:
+                # Object must have been deleted.  It cannot be rendered to
+                # end user, or edited, so just remove it from the HTML
+                # altogether
+                return u''
+            return u'[[CMSPlugin(%s)]]' % (new_id,)
+        return OBJ_ADMIN_RE.sub(_replace_tag, text)
+
+    def plugin_markup(self):
+        return safestring.mark_safe(r"""function(plugin_id, icon_src, icon_alt) { return '[[CMSPlugin(' + plugin_id + ')]]'; }""")
+
+    def plugin_regexp(self):
+        return safestring.mark_safe(r"""function(plugin_id) { return new RegExp('\\[\\[CMSPlugin\\(\\s*' + plugin_id + '\\s*\\)\\]\\]', 'g'); }""")
 
 def _get_django_request():
     frame = inspect.currentframe()
