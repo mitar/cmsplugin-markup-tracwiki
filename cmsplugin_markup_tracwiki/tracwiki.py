@@ -267,10 +267,8 @@ class DjangoResource(Component):
         yield ('filer', self._format_link)
 
 # TODO: Make a macro similar to [[Image]] but which uses filer, but should also support thumbnail tag (or do another one for that?)
-# TODO: In admin some GUI way to select files/images from filer should be made (one to select (file) URL, the other to select [[Image]] macro), similar to how integration with rich-text editor is made
 # TODO: Relative links [..] should traverse Django CMS hierarchy
 # TODO: Make Trac and Django CMS caching interoperate (how does dynamic macros currently behave?)
-# TODO: Add an option to render the content everytime (for dynamic macros) or only on save (what currently happens)
 # TODO: Does request really have URL we want (for example in admin URL is not the URL of a resulting page)
 # TODO: Do we really need to use href() or should we just use Django URLs directly (as we configure href() with Django base URL anyway)
 # TODO: When using django-reversion, add an option to compare versions of plugin content and display it in the same way as Trac does
@@ -279,6 +277,7 @@ class Markup(markup_plugins.MarkupBase):
     name = 'Trac wiki'
     identifier = 'tracwiki'
     text_enabled_plugins = True
+    is_dynamic = True
 
     def __init__(self, *args, **kwargs):
         self.env = DjangoEnvironment()
