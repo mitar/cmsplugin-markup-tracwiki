@@ -16,6 +16,7 @@ from trac import wiki
 from trac.util import datefmt, translation as trac_translation
 from trac.web import main
 
+from django import template
 from django.contrib.sites import models as sites_models
 from django.core import urlresolvers
 from django.db.models import Q
@@ -34,11 +35,11 @@ OBJ_ADMIN_RE_PATTERN = ur'\[\[CMSPlugin\(\s*(\d+)\s*\)\]\]'
 OBJ_ADMIN_RE = re.compile(OBJ_ADMIN_RE_PATTERN)
 
 components = [
+    'cmsplugin_markup_tracwiki.tracwiki.DjangoComponent',
     'trac.wiki.macros.MacroListMacro',
     'trac.wiki.macros.KnownMimeTypesMacro',
-    'trac.wiki.macros.ImageMacro',
     'trac.wiki.macros.PageOutlineMacro',
-    'cmsplugin_markup_tracwiki.tracwiki.DjangoResource',
+    'cmsplugin_markup_tracwiki.macros.CMSPluginMacro',
     'cmsplugin_markup_tracwiki.macros.URLMacro',
     'cmsplugin_markup_tracwiki.macros.NowMacro',
 ]
@@ -73,10 +74,12 @@ class DjangoEnvironment(test.EnvironmentStub):
             self.abs_href = web.href.Href('http://' + site.domain + (':' + server_port if server_port != '80' else '') + self.href())
 
 class DjangoRequest(web.Request):
-    def __init__(self, request):
+    def __init__(self, request, context, placeholder):
         super(DjangoRequest, self).__init__(request.META, self._start_response)
 
         self.django_request = request
+        self.django_context = context
+        self.django_placeholder = placeholder
         
         self.perm = main.FakePerm()
         self.session = main.FakeSession()
@@ -133,12 +136,16 @@ class DjangoFormatter(wiki.formatter.Formatter):
         """We override _make_lhref_link to make 'cms' namespace default."""
         return super(DjangoFormatter, self)._make_lhref_link(match, fullmatch, rel, ns or 'cms', target, label)
 
-class DjangoResource(Component):
+class DjangoResource(resource.Resource):
+    __slots__ = ('django_request')
+
+class DjangoComponent(Component):
     implements(resource.IResourceManager, wiki.IWikiSyntaxProvider)
     
     def _format_link(self, formatter, ns, target, label, fullmatch=None):
         link, params, fragment = formatter.split_link(target)
-        page = resource.Resource(ns, link)
+        page = DjangoResource(ns, link)
+        page.django_request = _get_django_request(req=formatter.req)
         try:
             href = resource.get_resource_url(self.env, page, formatter.href)
             title = resource.get_resource_name(self.env, page)
@@ -157,14 +164,14 @@ class DjangoResource(Component):
             return href(**kwargs)
         elif res.realm == 'filer':
             try:
-                link = self._get_file(res.id).url
+                link = self._get_file(res).url
             except filer_models.File.DoesNotExist as e:
                 raise resource.ResourceNotFound(e)
         elif res.realm == 'cms':
             try:
-                request = _get_django_request()
+                request = _get_django_request(res=res)
                 lang = cms_utils.get_language_from_request(request)
-                link = self._get_page(res.id).get_absolute_url(language=lang)
+                link = self._get_page(res).get_absolute_url(language=lang)
             except cms_models.Page.DoesNotExist:
                 try:
                     # Test again as request.current_page could be None
@@ -182,16 +189,16 @@ class DjangoResource(Component):
             args.append('')
         return href(*args, **kwargs)
     
-    def get_resource_description(self, res, format='default', context=None, **kwargs):
+    def get_resource_description(self, res, format='default', ctx=None, **kwargs):
         if res.id is None or not res.realm:
             return ''
         elif res.realm == 'filer':
-            return self._get_file(res.id, context).label
+            return self._get_file(res, ctx).label
         elif res.realm == 'cms':
             try:
-                request = _get_django_request()
+                request = _get_django_request(res=res, ctx=ctx)
                 lang = cms_utils.get_language_from_request(request)
-                return self._get_page(res.id, context).get_title(language=lang)
+                return self._get_page(res, ctx).get_title(language=lang)
             except cms_models.Page.DoesNotExist:
                 return ''
         else:
@@ -202,13 +209,13 @@ class DjangoResource(Component):
             return False
         elif res.realm == 'filer':
             try:
-                self._get_file(res.id)
+                self._get_file(res)
                 return True
             except filer_models.File.DoesNotExist:
                 return False
         elif res.realm == 'cms':
             try:
-                self._get_page(res.id)
+                self._get_page(res)
                 return True
             except cms_models.Page.DoesNotExist:
                 pass
@@ -225,11 +232,9 @@ class DjangoResource(Component):
         else:
             raise RuntimeError("This should be impossible")
 
-    def _get_page(self, page_id, context=None):
-        if context is not None:
-            request = context.req.django_request
-        else:
-            request = _get_django_request()
+    def _get_page(self, res, ctx=None):
+        page_id = res.id
+        request = _get_django_request(res=res, ctx=ctx)
         if not page_id:
             # cms.middleware.page.CurrentPageMiddleware is required for this
             if request.current_page:
@@ -244,13 +249,11 @@ class DjangoResource(Component):
         else:
             return moderator.get_page_queryset(request).get(reverse_id=page_id)
 
-    def _get_file(self, file_id, context=None):
+    def _get_file(self, res, ctx=None):
+        file_id = res.id
         if not file_id:
             raise filer_models.File.DoesNotExist()
-        if context is not None:
-            request = context.req.django_request
-        else:
-            request = _get_django_request()
+        request = _get_django_request(res=res, ctx=ctx)
         f = filer_models.File.objects.get(Q(original_filename=file_id) | Q(name=file_id) | Q(sha1=file_id) | Q(file=file_id))
         if f.is_public or f.has_read_permission(request):
             return f
@@ -266,12 +269,12 @@ class DjangoResource(Component):
         yield ('cms', self._format_link)
         yield ('filer', self._format_link)
 
-# TODO: Make a macro similar to [[Image]] but which uses filer, but should also support thumbnail tag (or do another one for that?)
 # TODO: Relative links [..] should traverse Django CMS hierarchy
 # TODO: Make Trac and Django CMS caching interoperate (how does dynamic macros currently behave?)
 # TODO: Does request really have URL we want (for example in admin URL is not the URL of a resulting page)
 # TODO: Do we really need to use href() or should we just use Django URLs directly (as we configure href() with Django base URL anyway)
 # TODO: When using django-reversion, add an option to compare versions of plugin content and display it in the same way as Trac does
+# TODO: Is markup object really reused or is it created (and DjangoEnvironment with it) again and again for each page display?
 
 class Markup(markup_plugins.MarkupBase):
     name = 'Trac wiki'
@@ -282,11 +285,13 @@ class Markup(markup_plugins.MarkupBase):
     def __init__(self, *args, **kwargs):
         self.env = DjangoEnvironment()
 
-    def parse(self, value):
-        request = _get_django_request()
+    def parse(self, value, context=None, placeholder=None):
+        request = _get_django_request(context=context)
         self.env.set_abs_href(request)
-        req = DjangoRequest(request)
-        res = resource.Resource('cms', 'pages-root') # TODO: Get ID from request (and version?)
+        if not context:
+            context = template.RequestContext(request, {})
+        req = DjangoRequest(request, context, placeholder)
+        res = DjangoResource('cms', 'pages-root') # TODO: Get ID from request (and version?)
         ctx = mimeview.Context.from_request(req, res)
         out = StringIO()
         DjangoFormatter(self.env, ctx).format(value, out)
@@ -315,7 +320,16 @@ class Markup(markup_plugins.MarkupBase):
     def plugin_regexp(self):
         return safestring.mark_safe(r"""function(plugin_id) { return new RegExp('\\[\\[CMSPlugin\\(\\s*' + plugin_id + '\\s*\\)\\]\\]', 'g'); }""")
 
-def _get_django_request():
+def _get_django_request(req=None, context=None, res=None, ctx=None):
+    if req and hasattr(req, 'django_request'):
+        return req.django_request
+    if context and 'request' in context:
+        return context['request']
+    if hasattr(res, 'django_request'):
+        return res.django_request
+    if ctx and ctx.req and hasattr(ctx.req, 'django_request'):
+        return ctx.req.django_request
+
     frame = inspect.currentframe()
     try:
         while frame.f_back:

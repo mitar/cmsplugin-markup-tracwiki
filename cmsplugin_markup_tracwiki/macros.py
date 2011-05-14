@@ -3,11 +3,13 @@ from trac.wiki import macros
 from django import template
 from django.template import defaulttags
 
+from cms.models import pluginmodel as plugin_models
+
 class DjangoTagMacroBase(macros.WikiMacroBase):
     def expand_macro(self, formatter, name, content):
         tag = getattr(defaulttags, self.django_tag_name)
         node = tag(template.Parser(''), template.Token(template.TOKEN_BLOCK, "%s %s" % (self.django_tag_name, content)))
-        return node.render(template.Context({}))
+        return node.render(formatter.req.django_context)
 
     def get_macros(self):
         yield self.django_tag_name
@@ -28,8 +30,6 @@ class URLMacro(DjangoTagMacroBase):
     }}}
     """
 
-    # TODO: Retain the same Django context through whole rendering of wiki content? So that "as" could work? But what then, it should be possible to output it somehow, too.
-
     django_tag_name = 'url'
 
 class NowMacro(DjangoTagMacroBase):
@@ -49,3 +49,31 @@ class NowMacro(DjangoTagMacroBase):
     """
  
     django_tag_name = 'now'
+
+class CMSPluginMacro(macros.WikiMacroBase):
+    """Macro which renders Django CMS plugin.
+    
+    It takes only one argument, an object ID of a Django CMS plugin which is attached to the markup plugin using this macro. Attaching
+    the plugin and inserting the proper ID is done by the Django CMS itself so using this macro by its own has little practical use.
+
+    Examples:
+
+    {{{
+        [[CMSPlugin(42)]]
+    }}}
+    """
+
+    def expand_macro(self, formatter, name, content):
+        request = formatter.req.django_request
+        context = formatter.req.django_context
+        placeholder = formatter.req.django_placeholder
+        try:
+            plugin = plugin_models.CMSPlugin.objects.get(pk=content.strip())
+            plugin._render_meta.text_enabled = True
+            return plugin.render_plugin(context, placeholder)
+        except Exception as e:
+            # TODO: Log
+            if (request.user.is_authenticated() and request.user.is_staff) or 'preview' in request.GET:
+                raise e
+            else:
+                return u''
