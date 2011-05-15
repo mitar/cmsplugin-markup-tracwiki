@@ -20,7 +20,7 @@ class URLMacro(DjangoTagMacroBase):
     For more information on how to use it and of its syntax please refer to
     [http://docs.djangoproject.com/en/dev/ref/templates/builtins/#url Django documentation].
 
-    Using it with `as` does not really do anything useful.
+    Using it with `as` probably does not do anything really useful.
 
     Examples:
 
