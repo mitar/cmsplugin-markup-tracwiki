@@ -16,6 +16,7 @@ from trac import wiki
 from trac.util import datefmt, translation as trac_translation
 from trac.web import main
 
+from django import http
 from django import template
 from django.contrib.sites import models as sites_models
 from django.core import urlresolvers
@@ -29,10 +30,15 @@ from cms.utils import moderator
 
 from filer.models import filemodels as filer_models
 
+from cmsplugin_blog import models as blog_models
+
 from cmsplugin_markup import plugins as markup_plugins
 
 OBJ_ADMIN_RE_PATTERN = ur'\[\[CMSPlugin\(\s*(\d+)\s*\)\]\]'
 OBJ_ADMIN_RE = re.compile(OBJ_ADMIN_RE_PATTERN)
+
+PLUGIN_EDIT_RE_PATTERN = ur'edit-plugin/(\d+)'
+PLUGIN_EDIT_RE = re.compile(PLUGIN_EDIT_RE_PATTERN)
 
 components = [
     'cmsplugin_markup_tracwiki.tracwiki.DjangoComponent',
@@ -137,18 +143,19 @@ class DjangoFormatter(wiki.formatter.Formatter):
         return super(DjangoFormatter, self)._make_lhref_link(match, fullmatch, rel, ns or 'cms', target, label)
 
 class DjangoResource(resource.Resource):
-    __slots__ = ('django_request')
+    __slots__ = ('django_request', 'django_context')
 
 class DjangoComponent(Component):
     implements(resource.IResourceManager, wiki.IWikiSyntaxProvider)
     
     def _format_link(self, formatter, ns, target, label, fullmatch=None):
         link, params, fragment = formatter.split_link(target)
-        page = DjangoResource(ns, link)
-        page.django_request = _get_django_request(req=formatter.req)
+        res = DjangoResource(ns, link)
+        res.django_request = _get_django_request(req=formatter.req)
+        res.django_context = _get_django_context(req=formatter.req)
         try:
-            href = resource.get_resource_url(self.env, page, formatter.href)
-            title = resource.get_resource_name(self.env, page)
+            href = resource.get_resource_url(self.env, res, formatter.href)
+            title = resource.get_resource_name(self.env, res)
             return tag.a(label, title=title, href=href + params + fragment)
         except resource.ResourceNotFound:
             return tag.a(label + '?', class_='missing', href=target, rel='nofollow')
@@ -158,25 +165,32 @@ class DjangoComponent(Component):
     def get_resource_realms(self):
         yield 'cms'
         yield 'filer'
+        yield 'blog'
     
     def get_resource_url(self, res, href, **kwargs):
         if res.id is None or not res.realm:
-            return href(**kwargs)
+            raise resource.ResourceNotFound()
         elif res.realm == 'filer':
             try:
                 link = self._get_file(res).url
             except filer_models.File.DoesNotExist as e:
+                raise resource.ResourceNotFound(e)
+        elif res.realm == 'blog':
+            try:
+                link = self._get_blog(res).get_absolute_url()
+            except blog_models.EntryTitle.DoesNotExist as e:
                 raise resource.ResourceNotFound(e)
         elif res.realm == 'cms':
             try:
                 request = _get_django_request(res=res)
                 lang = cms_utils.get_language_from_request(request)
                 link = self._get_page(res).get_absolute_url(language=lang)
-            except cms_models.Page.DoesNotExist:
+            except cms_models.Page.DoesNotExist as e:
+                # Test again as maybe we got [cms: this page] link but we could not get current page
+                if not res.id:
+                    raise resource.ResourceNotFound(e)
+
                 try:
-                    # Test again as request.current_page could be None
-                    if not res.id:
-                        return href(**kwargs)
                     link = urlresolvers.reverse(res.id)
                 except urlresolvers.NoReverseMatch as e:
                     raise resource.ResourceNotFound(e)
@@ -191,16 +205,24 @@ class DjangoComponent(Component):
     
     def get_resource_description(self, res, format='default', ctx=None, **kwargs):
         if res.id is None or not res.realm:
-            return ''
+            raise resource.ResourceNotFound()
         elif res.realm == 'filer':
-            return self._get_file(res, ctx).label
+            try:
+                return self._get_file(res, ctx).label
+            except filer_models.File.DoesNotExist as e:
+                raise resource.ResourceNotFound(e)
+        elif res.realm == 'blog':
+            try:
+                return self._get_blog(res, ctx).title
+            except blog_models.EntryTitle.DoesNotExist as e:
+                raise resource.ResourceNotFound(e)
         elif res.realm == 'cms':
             try:
                 request = _get_django_request(res=res, ctx=ctx)
                 lang = cms_utils.get_language_from_request(request)
                 return self._get_page(res, ctx).get_title(language=lang)
-            except cms_models.Page.DoesNotExist:
-                return ''
+            except cms_models.Page.DoesNotExist as e:
+                raise resource.ResourceNotFound(e)
         else:
             raise RuntimeError("This should be impossible")
     
@@ -213,6 +235,12 @@ class DjangoComponent(Component):
                 return True
             except filer_models.File.DoesNotExist:
                 return False
+        elif res.realm == 'blog':
+            try:
+                self._get_blog(res)
+                return True
+            except blog_models.EntryTitle.DoesNotExist:
+                return False
         elif res.realm == 'cms':
             try:
                 self._get_page(res)
@@ -220,7 +248,7 @@ class DjangoComponent(Component):
             except cms_models.Page.DoesNotExist:
                 pass
 
-            # Test again as request.current_page could be None
+            # Test again as maybe we got [cms: this page] link but we could not get current page
             if not res.id:
                 return False
             
@@ -235,17 +263,26 @@ class DjangoComponent(Component):
     def _get_page(self, res, ctx=None):
         page_id = res.id
         request = _get_django_request(res=res, ctx=ctx)
-        if not page_id:
+        if not page_id: # links like [cms: current page]
             # cms.middleware.page.CurrentPageMiddleware is required for this
             if request.current_page:
                 return request.current_page
+            # It is not really necessary that the current page is known as plugins can be rendered also outside of pages (like in preview view in admin), we can try to use a hint
+            elif request.POST.get('page_id'):
+                return moderator.get_page_queryset(request).get(pk=request.POST['page_id'])
             else:
-                # It is not really necessary that the current page is known as plugins can be rendered also outside of pages (like in preview view in admin)
-                # TODO: Check what happens on blog (also in preview there as we use request.current_page in preview template)
-                if request.POST['page_id']:
-                    return moderator.get_page_queryset(request).get(pk=request.POST['page_id'])
-                else:
+                context = _get_django_context(res=res, ctx=ctx)
+                plugin = self._get_plugin(request, context)
+
+                if not plugin:
                     raise cms_models.Page.DoesNotExist()
+
+                try:
+                    # TODO: If plugin is used in an app this does not find an anchor page for the app, but this happens only in a preview as otherwise request.current_page works
+                    return plugin.placeholder.page_set.get()
+                except cms_models.Page.MultipleObjectsReturned as e:
+                    # Should not happen
+                    raise cms_models.Page.DoesNotExist(e)
         else:
             return moderator.get_page_queryset(request).get(reverse_id=page_id)
 
@@ -254,11 +291,50 @@ class DjangoComponent(Component):
         if not file_id:
             raise filer_models.File.DoesNotExist()
         request = _get_django_request(res=res, ctx=ctx)
-        f = filer_models.File.objects.get(Q(original_filename=file_id) | Q(name=file_id) | Q(sha1=file_id) | Q(file=file_id))
+        try:
+            f = filer_models.File.objects.get(Q(original_filename=file_id) | Q(name=file_id) | Q(sha1=file_id) | Q(file=file_id))
+        except filer_models.File.MultipleObjectsReturned as e:
+            raise filer_models.File.DoesNotExist(e)
         if f.is_public or f.has_read_permission(request):
             return f
         else:
             raise filer_models.File.DoesNotExist()
+
+    def _get_blog(self, res, ctx=None):
+        blog_id = res.id
+        if not blog_id: # links like [blog: current blog entry]
+            request = _get_django_request(res=res, ctx=ctx)
+            context = _get_django_context(res=res, ctx=ctx)
+            plugin = self._get_plugin(request, context)
+
+            if not plugin:
+                raise blog_models.EntryTitle.DoesNotExist()
+
+            try:
+                return plugin.placeholder.entry_set.get().entrytitle_set.get()
+            except (blog_models.Entry.DoesNotExist, blog_models.Entry.MultipleObjectsReturned) as e:
+                # MultipleObjectsReturned should not happen
+                raise blog_models.EntryTitle.DoesNotExist(e)
+            except blog_models.EntryTitle.MultipleObjectsReturned as e:
+                # Should not happen
+                raise blog_models.EntryTitle.DoesNotExist(e)
+        else:
+            return blog_models.EntryTitle.objects.get(slug=blog_id)
+
+    def _get_plugin(self, request, context):
+        if context and context.get('object'):
+            return context['object']
+        else:
+            # We come to here probably only in admin
+            match = PLUGIN_EDIT_RE.search(request.path)
+
+            if request.POST.get('plugin_id') or match:
+                try:
+                    return cms_models.CMSPlugin.objects.get(pk=request.POST.get('plugin_id') or match.group(1))
+                except cms_models.CMSPlugin.DoesNotExist:
+                    return None
+            else:
+                return None
     
     # IWikiSyntaxProvider methods
     
@@ -268,6 +344,7 @@ class DjangoComponent(Component):
     def get_link_resolvers(self):
         yield ('cms', self._format_link)
         yield ('filer', self._format_link)
+        yield ('blog', self._format_link)
 
 # TODO: Relative links [..] should traverse Django CMS hierarchy
 # TODO: Make Trac and Django CMS caching interoperate (how does dynamic macros currently behave?)
@@ -275,6 +352,7 @@ class DjangoComponent(Component):
 # TODO: Do we really need to use href() or should we just use Django URLs directly (as we configure href() with Django base URL anyway)
 # TODO: When using django-reversion, add an option to compare versions of plugin content and display it in the same way as Trac does
 # TODO: Is markup object really reused or is it created (and DjangoEnvironment with it) again and again for each page display?
+# TODO: Do some caching between calls to _get_page, _get_file and _get_blog, if it is necessary (do they hit the database everytime?)
 
 class Markup(markup_plugins.MarkupBase):
     name = 'Trac wiki'
@@ -321,13 +399,13 @@ class Markup(markup_plugins.MarkupBase):
         return safestring.mark_safe(r"""function(plugin_id) { return new RegExp('\\[\\[CMSPlugin\\(\\s*' + plugin_id + '\\s*\\)\\]\\]', 'g'); }""")
 
 def _get_django_request(req=None, context=None, res=None, ctx=None):
-    if req and hasattr(req, 'django_request'):
+    if req and getattr(req, 'django_request', None):
         return req.django_request
-    if context and 'request' in context:
+    if context and context.get('request'):
         return context['request']
-    if hasattr(res, 'django_request'):
+    if getattr(res, 'django_request', None):
         return res.django_request
-    if ctx and ctx.req and hasattr(ctx.req, 'django_request'):
+    if ctx and ctx.req and getattr(ctx.req, 'django_request', None):
         return ctx.req.django_request
 
     frame = inspect.currentframe()
@@ -335,9 +413,27 @@ def _get_django_request(req=None, context=None, res=None, ctx=None):
         while frame.f_back:
             frame = frame.f_back
             request = frame.f_locals.get('request')
-            if request:
-                # TODO: Check if it is really a Django request
+            if request and isinstance(request, http.HttpRequest):
                 return request
+    finally:
+        del frame
+    return None
+
+def _get_django_context(req=None, res=None, ctx=None):
+    if req and getattr(req, 'django_context', None):
+        return req.django_context
+    if getattr(res, 'django_context', None):
+        return res.django_context
+    if ctx and ctx.req and getattr(ctx.req, 'django_context', None):
+        return ctx.req.django_context
+
+    frame = inspect.currentframe()
+    try:
+        while frame.f_back:
+            frame = frame.f_back
+            context = frame.f_locals.get('context')
+            if context and isinstance(context, template.Context):
+                return context
     finally:
         del frame
     return None
