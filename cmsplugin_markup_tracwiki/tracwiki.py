@@ -8,16 +8,19 @@ from genshi.builder import tag
 
 from trac.core import *
 
+from trac import log
 from trac import mimeview
 from trac import test
 from trac import resource
 from trac import web
 from trac import wiki
 from trac.util import datefmt, translation as trac_translation
+from trac.web import chrome as trac_chrome
 from trac.web import main
 
 from django import http
 from django import template
+from django.conf import settings
 from django.contrib.sites import models as sites_models
 from django.core import urlresolvers
 from django.db.models import Q
@@ -42,9 +45,15 @@ PLUGIN_EDIT_RE = re.compile(PLUGIN_EDIT_RE_PATTERN)
 
 components = [
     'cmsplugin_markup_tracwiki.tracwiki.DjangoComponent',
+    'trac.mimeview.pygments',
+    'trac.mimeview.rst',
+    'trac.mimeview.txtl',
+    'trac.mimeview.patch',
+    'trac.mimeview.*',
     'trac.wiki.macros.MacroListMacro',
     'trac.wiki.macros.KnownMimeTypesMacro',
     'trac.wiki.macros.PageOutlineMacro',
+    'trac.wiki.intertrac',
     'cmsplugin_markup_tracwiki.macros.CMSPluginMacro',
     'cmsplugin_markup_tracwiki.macros.URLMacro',
     'cmsplugin_markup_tracwiki.macros.NowMacro',
@@ -66,8 +75,19 @@ class DjangoEnvironment(test.EnvironmentStub):
                 __import__(name=module_and_class[0], fromlist=[module_and_class[1]])
 
         self.href = web.href.Href(urlresolvers.reverse('pages-root'))
-       
+
+        self.config.set('trac', 'default_charset', 'utf-8')
+
         # TODO: Use Django logging facilities?
+        self.config.set('logging', 'log_level', 'WARN')
+        self.config.set('logging', 'log_type', 'stderr')
+        self.setup_log()
+
+        for (ns, conf) in getattr(settings, 'CMS_MARKUP_TRAC_INTERTRAC', {}).items():
+            if 'TITLE' in conf and 'URL' in conf:
+                self.config.set('intertrac', '%s.title' % (ns,), conf['TITLE'])
+                self.config.set('intertrac', '%s.url' % (ns,), conf['URL'])
+
         # TODO: Sync activated locales with Django?
 
     def set_abs_href(self, request):
@@ -79,8 +99,11 @@ class DjangoEnvironment(test.EnvironmentStub):
         else:
             self.abs_href = web.href.Href('http://' + site.domain + (':' + server_port if server_port != '80' else '') + self.href())
 
+class DjangoChrome(trac_chrome.Chrome):
+    pass
+
 class DjangoRequest(web.Request):
-    def __init__(self, request, context, placeholder):
+    def __init__(self, env, request, context, placeholder):
         super(DjangoRequest, self).__init__(request.META, self._start_response)
 
         self.django_request = request
@@ -90,12 +113,15 @@ class DjangoRequest(web.Request):
         self.perm = main.FakePerm()
         self.session = main.FakeSession()
 
+        chrome = DjangoChrome(env)
+
         if request.user.is_authenticated():
             self.session['name'] = request.user.get_full_name()
             self.session['email'] = request.user.email
 
         self.callbacks.update({
             'authname': self._get_authname,
+            'chrome': chrome.prepare_request,
             'tz': self._get_timezone,
             'locale': self._get_locale,
         })
@@ -141,6 +167,10 @@ class DjangoFormatter(wiki.formatter.Formatter):
     def _make_lhref_link(self, match, fullmatch, rel, ns, target, label):
         """We override _make_lhref_link to make 'cms' namespace default."""
         return super(DjangoFormatter, self)._make_lhref_link(match, fullmatch, rel, ns or 'cms', target, label)
+
+    def _make_ext_link(self, url, text, title=''):
+        # TODO: Make configurable which links are external, currently we do not render external links any differently than internal
+        return tag.a(text, href=url, title=title or None)
 
 class DjangoResource(resource.Resource):
     __slots__ = ('django_request', 'django_context')
@@ -353,6 +383,7 @@ class DjangoComponent(Component):
 # TODO: When using django-reversion, add an option to compare versions of plugin content and display it in the same way as Trac does
 # TODO: Is markup object really reused or is it created (and DjangoEnvironment with it) again and again for each page display?
 # TODO: Do some caching between calls to _get_page, _get_file and _get_blog, if it is necessary (do they hit the database everytime?)
+# TODO: Support InterWiki prefixes
 
 class Markup(markup_plugins.MarkupBase):
     name = 'Trac wiki'
@@ -368,7 +399,7 @@ class Markup(markup_plugins.MarkupBase):
         self.env.set_abs_href(request)
         if not context:
             context = template.RequestContext(request, {})
-        req = DjangoRequest(request, context, placeholder)
+        req = DjangoRequest(self.env, request, context, placeholder)
         res = DjangoResource('cms', 'pages-root') # TODO: Get ID from request (and version?)
         ctx = mimeview.Context.from_request(req, res)
         out = StringIO()

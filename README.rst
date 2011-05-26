@@ -57,3 +57,20 @@ into the wiki markup. Probably you should not use it manually.
 
 Additional macros or other features can be added on request. Or you can just clone
 the repository and implement them yourself and send me a pull request.
+
+********
+Settings
+********
+
+There are the following Django settings.
+
+``CMS_MARKUP_TRAC_INTERTRAC`` configures Trac's `InterTrac <http://trac.edgewall.org/wiki/InterTrac>`_ links. For example:
+
+    CMS_MARKUP_TRAC_INTERTRAC = {
+        'trac': {
+            'TITLE': 'Trac',
+            'URL': 'http://trac.edgewall.org',
+        },
+    }
+
+allows you to link to the ticket #1234 in Trac's official installation with ``[trac:ticket:1234 #1234]``.
