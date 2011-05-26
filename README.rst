@@ -64,7 +64,7 @@ Settings
 
 There are the following Django settings.
 
-``CMS_MARKUP_TRAC_INTERTRAC`` configures Trac's `InterTrac <http://trac.edgewall.org/wiki/InterTrac>`_ links. For example:
+``CMS_MARKUP_TRAC_INTERTRAC`` configures Trac's `InterTrac <http://trac.edgewall.org/wiki/InterTrac>`_ links. For example::
 
     CMS_MARKUP_TRAC_INTERTRAC = {
         'trac': {
