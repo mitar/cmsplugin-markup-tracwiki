@@ -74,3 +74,5 @@ There are the following Django settings.
     }
 
 allows you to link to the ticket #1234 in Trac's official installation with ``[trac:ticket:1234 #1234]``.
+
+``CMS_MARKUP_TRAC_COMPONENTS`` configures which additional Trac plugins (components) should be enabled. They should of course be in Python path.
