@@ -43,7 +43,7 @@ OBJ_ADMIN_RE = re.compile(OBJ_ADMIN_RE_PATTERN)
 PLUGIN_EDIT_RE_PATTERN = ur'edit-plugin/(\d+)'
 PLUGIN_EDIT_RE = re.compile(PLUGIN_EDIT_RE_PATTERN)
 
-components = [
+COMPONENTS = [
     'cmsplugin_markup_tracwiki.tracwiki.DjangoComponent',
     'trac.mimeview.pygments',
     'trac.mimeview.rst',
@@ -65,6 +65,9 @@ class DjangoEnvironment(test.EnvironmentStub):
     """A Django environment for Trac."""
     
     def __init__(self):
+        components = list(COMPONENTS)
+        components.extend(getattr(settings, 'CMS_MARKUP_TRAC_COMPONENTS', []))
+
         super(DjangoEnvironment, self).__init__(enable=components)
         
         for c in components:
@@ -384,6 +387,7 @@ class DjangoComponent(Component):
 # TODO: Is markup object really reused or is it created (and DjangoEnvironment with it) again and again for each page display?
 # TODO: Do some caching between calls to _get_page, _get_file and _get_blog, if it is necessary (do they hit the database everytime?)
 # TODO: Support InterWiki prefixes
+# TODO: Some Trac plugins also provide CSS, JS and other files in their htdocs directories - how to make Django include those?
 
 class Markup(markup_plugins.MarkupBase):
     name = 'Trac wiki'
