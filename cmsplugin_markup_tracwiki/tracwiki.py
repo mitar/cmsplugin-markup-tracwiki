@@ -90,6 +90,7 @@ class DjangoEnvironment(test.EnvironmentStub):
             if 'TITLE' in conf and 'URL' in conf:
                 self.config.set('intertrac', '%s.title' % (ns,), conf['TITLE'])
                 self.config.set('intertrac', '%s.url' % (ns,), conf['URL'])
+                self.config.set('intertrac', '%s.compat' % (ns,), conf.get('COMPAT', False))
 
         # TODO: Sync activated locales with Django?
 
