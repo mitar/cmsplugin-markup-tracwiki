@@ -8,6 +8,7 @@ from genshi.builder import tag
 
 from trac.core import *
 
+from trac import cache
 from trac import log
 from trac import mimeview
 from trac import test
@@ -17,6 +18,7 @@ from trac import wiki
 from trac.util import datefmt, translation as trac_translation
 from trac.web import chrome as trac_chrome
 from trac.web import main
+from trac.wiki import interwiki
 
 from django import http
 from django import template
@@ -49,6 +51,7 @@ PLUGIN_EDIT_RE = re.compile(PLUGIN_EDIT_RE_PATTERN)
 
 COMPONENTS = [
     'cmsplugin_markup_tracwiki.tracwiki.DjangoComponent',
+    'cmsplugin_markup_tracwiki.tracwiki.DjangoInterWikiMap',
     'trac.mimeview.pygments',
     'trac.mimeview.rst',
     'trac.mimeview.txtl',
@@ -91,8 +94,9 @@ class DjangoEnvironment(test.EnvironmentStub):
         self.setup_log()
 
         for (ns, conf) in getattr(settings, 'CMS_MARKUP_TRAC_INTERTRAC', {}).items():
-            if 'TITLE' in conf and 'URL' in conf:
-                self.config.set('intertrac', '%s.title' % (ns,), conf['TITLE'])
+            if 'URL' in conf:
+                if 'TITLE' in conf:
+                    self.config.set('intertrac', '%s.title' % (ns,), conf['TITLE'])
                 self.config.set('intertrac', '%s.url' % (ns,), conf['URL'])
                 self.config.set('intertrac', '%s.compat' % (ns,), conf.get('COMPAT', False))
 
@@ -166,6 +170,25 @@ class DjangoRequest(web.Request):
 
         return self._write
 
+class DjangoInterWikiMap(interwiki.InterWikiMap):
+    """
+    InterWiki map manager.
+    """
+
+    @cache.cached
+    def interwiki_map(self, db):
+        """
+        Map from upper-cased namespaces to (namespace, prefix, title) values.
+        """
+        map = {}
+        for (ns, conf) in getattr(settings, 'CMS_MARKUP_TRAC_INTERWIKI', {}).items():
+            if 'URL' in conf:
+                url = conf['URL'].strip()
+                title = conf.get('TITLE')
+                title = title and title.strip() or ns
+                map[ns.upper()] = (ns, url, title)
+        return map
+
 class DjangoFormatter(wiki.formatter.Formatter):
     def _parse_heading(self, match, fullmatch, shorten):
         (depth, heading, anchor) = super(DjangoFormatter, self)._parse_heading(match, fullmatch, shorten)
@@ -179,6 +202,12 @@ class DjangoFormatter(wiki.formatter.Formatter):
     def _make_ext_link(self, url, text, title=''):
         # TODO: Make configurable which links are external, currently we do not render external links any differently than internal
         return tag.a(text, href=url, title=title or None)
+
+    def _make_interwiki_link(self, ns, target, label):
+        interwiki = DjangoInterWikiMap(self.env)
+        if ns in interwiki:
+            url, title = interwiki.url(ns, target)
+            return self._make_ext_link(url, label, title)
 
 class DjangoResource(resource.Resource):
     __slots__ = ('django_request', 'django_context')

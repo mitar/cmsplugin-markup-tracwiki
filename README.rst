@@ -68,11 +68,20 @@ There are the following Django settings.
 
     CMS_MARKUP_TRAC_INTERTRAC = {
         'trac': {
-            'TITLE': 'Trac',
+            'TITLE': 'The Trac Project',
             'URL': 'http://trac.edgewall.org',
         },
     }
 
 allows you to link to the ticket #1234 in Trac's official installation with ``[trac:ticket:1234 #1234]``.
+
+Similar ``CMS_MARKUP_TRAC_INTERWIKI`` allows general `InterWiki <http://trac.edgewall.org/wiki/InterWiki>`_ links::
+
+    CMS_MARKUP_TRAC_INTERWIKI = {
+        'wikipedia': {
+            'TITLE': 'Wikipedia',
+            'URL': 'http://en.wikipedia.org/wiki/',
+        },
+    }
 
 ``CMS_MARKUP_TRAC_COMPONENTS`` configures which additional Trac plugins (components) should be enabled. They should of course be in Python path.
