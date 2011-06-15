@@ -31,7 +31,11 @@ from cms import models as cms_models
 from cms import utils as cms_utils
 from cms.utils import moderator
 
-from filer.models import filemodels as filer_models
+if 'filer' in settings.INSTALLED_APPS:
+    from filer.models import filemodels as filer_models
+    USING_FILER = True
+else:
+    USING_FILER = False
 
 from cmsplugin_blog import models as blog_models
 
@@ -198,7 +202,8 @@ class DjangoComponent(Component):
     
     def get_resource_realms(self):
         yield 'cms'
-        yield 'filer'
+        if USING_FILER:
+            yield 'filer'
         yield 'blog'
     
     def get_resource_url(self, res, href, **kwargs):
@@ -377,7 +382,8 @@ class DjangoComponent(Component):
     
     def get_link_resolvers(self):
         yield ('cms', self._format_link)
-        yield ('filer', self._format_link)
+        if USING_FILER:
+            yield ('filer', self._format_link)
         yield ('blog', self._format_link)
 
 # TODO: Relative links [..] should traverse Django CMS hierarchy
