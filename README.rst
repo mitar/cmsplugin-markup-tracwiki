@@ -86,4 +86,4 @@ Similar ``CMS_MARKUP_TRAC_INTERWIKI`` allows general `InterWiki <http://trac.edg
 
 ``CMS_MARKUP_TRAC_COMPONENTS`` configures which additional Trac plugins (components) should be enabled. They should of course be in Python path.
 
-``CMS_MARKUP_TRAC_HEADING_OFFSET`` configures the heading offset when rendering wiki syntax. Useful when you are including wiki content inside some other content with existing headings. Default is 1 which means that ``= Heading =`` becomes ``<h2>Heading</h2>``.
+``CMS_MARKUP_TRAC_HEADING_OFFSET`` configures the heading offset when rendering wiki syntax. Useful when you are including wiki content inside some other content with existing headings. Default is 1 which means that ``= Heading =`` becomes ``<h2>Heading</h2>``. Setting it to 0 disables this feature.
