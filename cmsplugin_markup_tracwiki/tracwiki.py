@@ -192,7 +192,7 @@ class DjangoInterWikiMap(interwiki.InterWikiMap):
 class DjangoFormatter(wiki.formatter.Formatter):
     def _parse_heading(self, match, fullmatch, shorten):
         (depth, heading, anchor) = super(DjangoFormatter, self)._parse_heading(match, fullmatch, shorten)
-        depth = min(depth + TRACWIKI_HEADER_OFFSET, 6)
+        depth = min(depth + getattr(settings, 'CMS_MARKUP_TRAC_HEADING_OFFSET', 1), 6)
         return (depth, heading, anchor)
     
     def _make_lhref_link(self, match, fullmatch, rel, ns, target, label):
