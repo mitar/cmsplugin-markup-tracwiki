@@ -87,6 +87,7 @@ class DjangoEnvironment(test.EnvironmentStub):
         self.href = web.href.Href(urlresolvers.reverse('pages-root'))
 
         self.config.set('trac', 'default_charset', 'utf-8')
+        self.config.set('trac', 'never_obfuscate_mailto', True)
 
         # TODO: Use Django logging facilities?
         self.config.set('logging', 'log_level', 'WARN')
