@@ -106,7 +106,7 @@ class DjangoEnvironment(test.EnvironmentStub):
     def set_abs_href(self, request):
         site = sites_models.Site.objects.get_current() if sites_models.Site._meta.installed else sites_models.RequestSite(request)
 
-        server_port = request.META.get('SERVER_PORT', '80')
+        server_port = str(request.META.get('SERVER_PORT', '80'))
         if request.is_secure():
             self.abs_href = web.href.Href('https://' + site.domain + (':' + server_port if server_port != '443' else '') + self.href())
         else:
