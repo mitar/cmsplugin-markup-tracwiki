@@ -371,6 +371,7 @@ class DjangoComponent(Component):
 
     def _get_blog(self, res, ctx=None):
         blog_id = res.id
+
         if not blog_id: # links like [blog: current blog entry]
             request = _get_django_request(res=res, ctx=ctx)
             context = _get_django_context(res=res, ctx=ctx)
@@ -387,8 +388,25 @@ class DjangoComponent(Component):
             except blog_models.EntryTitle.MultipleObjectsReturned as e:
                 # Should not happen
                 raise blog_models.EntryTitle.DoesNotExist(e)
+
         else:
-            return blog_models.EntryTitle.objects.get(slug=blog_id)
+            ids = blog_id.split(":", 1)
+
+            if len(ids) == 1:
+                blog_id = ids[0]
+
+                entries = blog_models.EntryTitle.objects.filter(slug=blog_id)
+                if len(entries) == 0:
+                    raise blog_models.EntryTitle.DoesNotExist
+                elif len(entries) == 1:
+                    return entries[0]
+                else:
+                    lang = django_translation.get_language()
+                    return entries.get(language=lang)
+
+            else:
+                (lang, blog_id) = ids
+                return blog_models.EntryTitle.objects.get(slug=blog_id, language=lang)
 
     def _get_plugin(self, request, context):
         if context and context.get('object'):
