@@ -38,7 +38,7 @@ There are three new namespaces available:
 - ``cms`` to access Django CMS pages (using optional reverse ID to identify them) or anything else
   in Django namespace, accessible by `reverse`
 - ``filer`` to access django-filer files (using original filename, current name, SHA-1 hash or stored file path)
-- ``blog`` to access cmsplugin-blog entries (using slug)
+- ``blog`` to access cmsplugin-blog entries (using slug, and optionally language code)
 
 Examples::
 
@@ -46,6 +46,7 @@ Examples::
     [cms:admin:index Admin main page]
     [filer:original-filename.png File]
     [blog:my-first-entry First blog entry]
+    [blog:en:my-first-entry First blog entry in English]
 
 There are two macros which bridges the gap to Django template tags:
 
