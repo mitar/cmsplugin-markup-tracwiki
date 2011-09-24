@@ -434,16 +434,6 @@ class DjangoComponent(Component):
             yield ('filer', self._format_link)
         yield ('blog', self._format_link)
 
-# TODO: Relative links [..] should traverse Django CMS hierarchy
-# TODO: Make Trac and Django CMS caching interoperate (how does dynamic macros currently behave?)
-# TODO: Does request really have URL we want (for example in admin URL is not the URL of a resulting page)
-# TODO: Do we really need to use href() or should we just use Django URLs directly (as we configure href() with Django base URL anyway)
-# TODO: When using django-reversion, add an option to compare versions of plugin content and display it in the same way as Trac does
-# TODO: Is markup object really reused or is it created (and DjangoEnvironment with it) again and again for each page display?
-# TODO: Do some caching between calls to _get_page, _get_file and _get_blog, if it is necessary (do they hit the database everytime?)
-# TODO: Support InterWiki prefixes
-# TODO: Some Trac plugins also provide CSS, JS and other files in their htdocs directories - how to make Django include those?
-
 class Markup(markup_plugins.MarkupBase):
     name = 'Trac wiki'
     identifier = 'tracwiki'
