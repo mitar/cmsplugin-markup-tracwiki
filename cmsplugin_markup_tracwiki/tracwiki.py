@@ -121,6 +121,10 @@ class DjangoEnvironment(test.EnvironmentStub):
                 self.config.set('intertrac', '%s.url' % (ns,), conf['URL'])
                 self.config.set('intertrac', '%s.compat' % (ns,), conf.get('COMPAT', False))
 
+        for (section, conf) in getattr(settings, 'CMS_MARKUP_TRAC_CONFIGURATION', {}).iteritems():
+            for (key, value) in conf.iteritems():
+                self.config.set(section, key, value)
+
         # TODO: Sync activated locales with Django?
 
     def set_abs_href(self, request):
@@ -131,6 +135,9 @@ class DjangoEnvironment(test.EnvironmentStub):
             self.abs_href = LazyHref('https://' + site.domain + (':' + server_port if server_port != '443' else '') + self.href())
         else:
             self.abs_href = LazyHref('http://' + site.domain + (':' + server_port if server_port != '80' else '') + self.href())
+    
+    def get_templates_dir(self):
+        return getattr(settings, 'CMS_MARKUP_TRAC_TEMPLATES_DIR', super(DjangoEnvironment, self).get_templates_dir())
 
 class DjangoChrome(trac_chrome.Chrome):
     pass

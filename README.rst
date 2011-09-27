@@ -85,6 +85,25 @@ Similar ``CMS_MARKUP_TRAC_INTERWIKI`` allows general `InterWiki <http://trac.edg
         },
     }
 
-``CMS_MARKUP_TRAC_COMPONENTS`` configures which additional Trac plugins (components) should be enabled. They should of course be in Python path.
+``CMS_MARKUP_TRAC_COMPONENTS`` configures which additional Trac plugins (components) should be enabled. They should of course be in Python path. And probably defined fully, like::
+
+    CMS_MARKUP_TRAC_COMPONENTS = (
+        'tracdashessyntax.plugin.DashesSyntaxPlugin',
+        'footnotemacro.macro.FootNoteMacro',
+        'mathjax.api.MathJaxPlugin',
+        'tracmath.tracmath.TracMathPlugin',
+    )
+
+``CMS_MARKUP_TRAC_CONFIGURATION`` allows definining any additional Trac configuration options, like::
+
+    CMS_MARKUP_TRAC_CONFIGURATION = {
+        'tracmath': {
+            'cache_dir': os.path.join(PROJECT_PATH, 'tracwiki', 'cache'),
+        }
+    }
+
+And ``CMS_MARKUP_TRAC_TEMPLATES_DIR`` specifies directory with Trac templates. Example::
+
+    CMS_MARKUP_TRAC_TEMPLATES_DIR = os.path.join(PROJECT_PATH, 'tracwiki', 'templates')
 
 ``CMS_MARKUP_TRAC_HEADING_OFFSET`` configures the heading offset when rendering wiki syntax. Useful when you are including wiki content inside some other content with existing headings. Default is 1 which means that ``= Heading =`` becomes ``<h2>Heading</h2>``. Setting it to 0 disables this feature.
