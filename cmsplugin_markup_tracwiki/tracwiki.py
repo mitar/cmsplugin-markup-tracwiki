@@ -1,6 +1,8 @@
 import inspect
 import os
 import re
+import string
+import sys
 
 from StringIO import StringIO
 
@@ -25,7 +27,9 @@ from django import template
 from django.conf import settings
 from django.contrib.sites import models as sites_models
 from django.core import urlresolvers
+from django.core.servers import basehttp
 from django.db.models import Q
+from django.utils import functional
 from django.utils import translation as django_translation
 from django.utils import safestring
 
@@ -42,6 +46,8 @@ else:
 from cmsplugin_blog import models as blog_models
 
 from cmsplugin_markup import plugins as markup_plugins
+
+from cmsplugin_markup_tracwiki import lazy
 
 OBJ_ADMIN_RE_PATTERN = ur'\[\[CMSPlugin\(\s*(\d+)\s*\)\]\]'
 OBJ_ADMIN_RE = re.compile(OBJ_ADMIN_RE_PATTERN)
@@ -61,12 +67,24 @@ COMPONENTS = [
     'trac.wiki.macros.KnownMimeTypesMacro',
     'trac.wiki.macros.PageOutlineMacro',
     'trac.wiki.intertrac',
+    'trac.web.chrome.Chrome',
+    'cmsplugin_markup_tracwiki.components.BaseHandler',
     'cmsplugin_markup_tracwiki.macros.CMSPluginMacro',
     'cmsplugin_markup_tracwiki.macros.URLMacro',
     'cmsplugin_markup_tracwiki.macros.NowMacro',
 ]
 
 TRACWIKI_HEADER_OFFSET = 1
+
+if not hasattr(urlresolvers, 'reverse_lazy'):
+    urlresolvers.reverse_lazy = functional.lazy(urlresolvers.reverse, str)
+
+class LazyHref(lazy.LazyObject):
+    def _setup(self):
+        self._wrapped = web.href.Href(*self._wrapped_args, **self._wrapped_kwargs)
+
+def tracwiki_base_path():
+    return urlresolvers.reverse_lazy('cmsplugin_markup_tracwiki', kwargs={'path': ''})
 
 class DjangoEnvironment(test.EnvironmentStub):
     """A Django environment for Trac."""
@@ -84,17 +102,19 @@ class DjangoEnvironment(test.EnvironmentStub):
             else:
                 __import__(name=module_and_class[0], fromlist=[module_and_class[1]])
 
-        self.href = web.href.Href(urlresolvers.reverse('pages-root'))
+        self.href = LazyHref(tracwiki_base_path())
 
         self.config.set('trac', 'default_charset', 'utf-8')
         self.config.set('trac', 'never_obfuscate_mailto', True)
+
+        self.config.set('trac', 'default_handler', 'BaseHandler')
 
         # TODO: Use Django logging facilities?
         self.config.set('logging', 'log_level', 'WARN')
         self.config.set('logging', 'log_type', 'stderr')
         self.setup_log()
 
-        for (ns, conf) in getattr(settings, 'CMS_MARKUP_TRAC_INTERTRAC', {}).items():
+        for (ns, conf) in getattr(settings, 'CMS_MARKUP_TRAC_INTERTRAC', {}).iteritems():
             if 'URL' in conf:
                 if 'TITLE' in conf:
                     self.config.set('intertrac', '%s.title' % (ns,), conf['TITLE'])
@@ -108,20 +128,28 @@ class DjangoEnvironment(test.EnvironmentStub):
 
         server_port = str(request.META.get('SERVER_PORT', '80'))
         if request.is_secure():
-            self.abs_href = web.href.Href('https://' + site.domain + (':' + server_port if server_port != '443' else '') + self.href())
+            self.abs_href = LazyHref('https://' + site.domain + (':' + server_port if server_port != '443' else '') + self.href())
         else:
-            self.abs_href = web.href.Href('http://' + site.domain + (':' + server_port if server_port != '80' else '') + self.href())
+            self.abs_href = LazyHref('http://' + site.domain + (':' + server_port if server_port != '80' else '') + self.href())
 
 class DjangoChrome(trac_chrome.Chrome):
+    pass
+
+class DjangoRequestDispatcher(main.RequestDispatcher):
     pass
 
 class DjangoRequest(web.Request):
     def __init__(self, env, request, context, placeholder):
         super(DjangoRequest, self).__init__(request.META, self._start_response)
 
+        # We override request's hrefs from environment (which are based on Django's URLs)
+        self.href = env.href
+        self.abs_href = env.abs_href
+
         self.django_request = request
         self.django_context = context
         self.django_placeholder = placeholder
+        self.django_response = None
         
         self.perm = main.FakePerm()
         self.session = main.FakeSession()
@@ -154,22 +182,26 @@ class DjangoRequest(web.Request):
         # Django sets TZ environment variable
         return datefmt.localtz
 
-    def _write(self, data):
-        if not data:
-            return
-
-        # TODO: Use Django logging facilities?
-        sys.stderr.write(data)
-        sys.stderr.write("\n")
-    
-    def _start_response(self, status, headers, exc_info):
+    def _start_response(self, status, headers, exc_info=None):
         if exc_info:
-            raise exc_info[0], exc_info[1], exc_info[2]
+            try:
+                raise exc_info[0], exc_info[1], exc_info[2]
+            finally:
+                exc_info = None # Avoids dangling circular ref
 
-        # TODO: Use Django logging facilities?
-        sys.stderr.write("Trac rasponse data, %s:\n", status)
+        headers = dict(headers)
 
-        return self._write
+        if 'Content-Type' in headers:
+            content_type = headers.pop('Content-Type')
+        else:
+            content_type = None
+
+        self.django_response = http.HttpResponse(status=status, content_type=content_type)
+
+        for (k, v) in headers.iteritems():
+            self.django_response[k] = v
+
+        return self.django_response.write
 
 class DjangoInterWikiMap(interwiki.InterWikiMap):
     """
@@ -182,7 +214,7 @@ class DjangoInterWikiMap(interwiki.InterWikiMap):
         Map from upper-cased namespaces to (namespace, prefix, title) values.
         """
         map = {}
-        for (ns, conf) in getattr(settings, 'CMS_MARKUP_TRAC_INTERWIKI', {}).items():
+        for (ns, conf) in getattr(settings, 'CMS_MARKUP_TRAC_INTERWIKI', {}).iteritems():
             if 'URL' in conf:
                 url = conf['URL'].strip()
                 title = conf.get('TITLE')
@@ -442,6 +474,8 @@ class Markup(markup_plugins.MarkupBase):
 
     def __init__(self, *args, **kwargs):
         self.env = DjangoEnvironment()
+        self.scripts = []
+        self.links = {}
 
     def parse(self, value, context=None, placeholder=None):
         request = _get_django_request(context=context)
@@ -452,11 +486,70 @@ class Markup(markup_plugins.MarkupBase):
         res = DjangoResource('cms', 'pages-root') # TODO: Get ID from request (and version?)
         ctx = mimeview.Context.from_request(req, res)
         out = StringIO()
+        self._early_scripts_and_links(req)
         DjangoFormatter(self.env, ctx).format(value, out)
+        self._all_scripts_and_links(req)
         return out.getvalue()
 
     def plugin_id_list(self, text):
         return OBJ_ADMIN_RE.findall(text)
+
+    def _early_scripts_and_links(self, req):
+        self._early_scripts_hrefs = [s['href'] for s in req.chrome.get('scripts', [])]
+        self._early_links_ids = ['%s:%s' % (r, l['href']) for (r, ls) in req.chrome.get('links', {}).iteritems() for l in ls]
+
+    def _all_scripts_and_links(self, req):
+        for script in req.chrome.get('scripts', []):
+            if script['href'] not in self._early_scripts_hrefs:
+                self.scripts.append({'href': script['href'], 'type': script.get('type', "text/javascript")})
+
+        for (rel, links) in req.chrome.get('links', {}).iteritems():
+            for l in links:
+                if '%s:%s' % (rel, l['href']) not in self._early_links_ids:
+                    self.links.setdefault(rel, []).append(l)
+
+    def get_scripts(self):
+        return self.scripts
+
+    def get_stylesheets(self):
+        return [{'href': s['href'], 'type': s.get('type', "text/css")} for s in self.links.get('stylesheet', [])]
+
+    def get_plugin_urls(self):
+        from django.conf.urls.defaults import patterns, url
+        
+        urls = super(Markup, self).get_plugin_urls()
+
+        trac_urls = patterns('',
+            url(r'^tracwiki/(?P<path>.*)$', self.serve_trac_path, name='cmsplugin_markup_tracwiki'),
+        )
+
+        return trac_urls + urls
+
+    def serve_trac_path(self, request, path):
+        self.env.set_abs_href(request)
+        context = template.RequestContext(request, {})
+        req = DjangoRequest(self.env, request, context, None)
+
+        base_path = req.href()
+        req.environ['PATH_INFO'] = req.environ.get('PATH_INFO', '')[len(base_path):]
+
+        # Have to encode Unicode back to UTF-8 for Trac
+        if isinstance(req.environ.get('PATH_INFO', ''), unicode):
+            req.environ['PATH_INFO'] = req.environ.get('PATH_INFO', '').encode('utf-8')
+
+        try:
+            dispatcher = DjangoRequestDispatcher(self.env)
+            dispatcher.dispatch(req)
+        except web.RequestDone:
+            pass
+        except web.HTTPNotFound, e:
+            raise http.Http404(e)
+        
+        if req._response:
+            req.django_response._container = req._response
+            req.django_response._is_string = False
+        
+        return req.django_response
 
     def replace_plugins(self, text, id_dict):
         def _replace_tag(m):
