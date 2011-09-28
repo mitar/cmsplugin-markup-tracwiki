@@ -47,3 +47,8 @@ class LazyObject(object):
         if self._wrapped is None:
             self._setup()
         return self._wrapped(*args, **kwargs)
+
+    def __add__(self, other):
+        if self._wrapped is None:
+            self._setup()
+        return self._wrapped + other
