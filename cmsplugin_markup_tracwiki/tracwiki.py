@@ -1,3 +1,4 @@
+import functools
 import inspect
 import os
 import re
@@ -29,7 +30,6 @@ from django.contrib.sites import models as sites_models
 from django.core import urlresolvers
 from django.core.servers import basehttp
 from django.db.models import Q
-from django.utils import functional
 from django.utils import translation as django_translation
 from django.utils import safestring
 
@@ -46,8 +46,6 @@ else:
 from cmsplugin_blog import models as blog_models
 
 from cmsplugin_markup import plugins as markup_plugins
-
-from cmsplugin_markup_tracwiki import lazy
 
 OBJ_ADMIN_RE_PATTERN = ur'\[\[CMSPlugin\(\s*(\d+)\s*\)\]\]'
 OBJ_ADMIN_RE = re.compile(OBJ_ADMIN_RE_PATTERN)
@@ -76,15 +74,21 @@ COMPONENTS = [
 
 TRACWIKI_HEADER_OFFSET = 1
 
-if not hasattr(urlresolvers, 'reverse_lazy'):
-    urlresolvers.reverse_lazy = functional.lazy(urlresolvers.reverse, str)
-
-class LazyHref(lazy.LazyObject):
-    def _setup(self):
-        self._wrapped = web.href.Href(*self._wrapped_args, **self._wrapped_kwargs)
-
 def tracwiki_base_path():
-    return urlresolvers.reverse_lazy('cmsplugin_markup_tracwiki', kwargs={'path': ''})
+    return urlresolvers.reverse('cmsplugin_markup_tracwiki', kwargs={'path': ''})
+
+def temporary_switch_to_trac_root(f):
+    @functools.wraps(f)
+    def wrapper(req, *args, **kwargs):
+        orig_href = req.href
+        req.href = web.href.Href(tracwiki_base_path())
+        f(req, *args, **kwargs)
+        req.href = orig_href
+    return wrapper
+
+# Those two methods should always use trac root
+trac_chrome.add_stylesheet = temporary_switch_to_trac_root(trac_chrome.add_stylesheet)
+trac_chrome.add_script = temporary_switch_to_trac_root(trac_chrome.add_script)
 
 class DjangoEnvironment(test.EnvironmentStub):
     """A Django environment for Trac."""
@@ -101,8 +105,6 @@ class DjangoEnvironment(test.EnvironmentStub):
                 __import__(name=module_and_class[0])
             else:
                 __import__(name=module_and_class[0], fromlist=[module_and_class[1]])
-
-        self.href = LazyHref(tracwiki_base_path())
 
         self.config.set('trac', 'default_charset', 'utf-8')
         self.config.set('trac', 'never_obfuscate_mailto', True)
@@ -127,20 +129,34 @@ class DjangoEnvironment(test.EnvironmentStub):
 
         # TODO: Sync activated locales with Django?
 
-    def set_abs_href(self, request):
+    def _set_abs_href(self, request):
         site = sites_models.Site.objects.get_current() if sites_models.Site._meta.installed else sites_models.RequestSite(request)
 
         server_port = str(request.META.get('SERVER_PORT', '80'))
         if request.is_secure():
-            self.abs_href = LazyHref('https://' + site.domain + (':' + server_port if server_port != '443' else '') + self.href())
+            self.abs_href = web.href.Href('https://' + site.domain + (':' + server_port if server_port != '443' else '') + self.href())
         else:
-            self.abs_href = LazyHref('http://' + site.domain + (':' + server_port if server_port != '80' else '') + self.href())
+            self.abs_href = web.href.Href('http://' + site.domain + (':' + server_port if server_port != '80' else '') + self.href())
+
+    def switch_to_django_root(self, request=None):
+        self.href = web.href.Href(urlresolvers.reverse('pages-root'))
+
+        if request:
+            self._set_abs_href(request)
+
+    def switch_to_trac_root(self, request=None):
+        self.href = web.href.Href(tracwiki_base_path())
+
+        if request:
+            self._set_abs_href(request)
     
     def get_templates_dir(self):
         return getattr(settings, 'CMS_MARKUP_TRAC_TEMPLATES_DIR', super(DjangoEnvironment, self).get_templates_dir())
 
 class DjangoChrome(trac_chrome.Chrome):
-    pass
+    @property
+    def htdocs_location(self):
+        return web.href.Href(tracwiki_base_path()).chrome('common')
 
 class DjangoRequestDispatcher(main.RequestDispatcher):
     pass
@@ -486,7 +502,7 @@ class Markup(markup_plugins.MarkupBase):
 
     def parse(self, value, context=None, placeholder=None):
         request = _get_django_request(context=context)
-        self.env.set_abs_href(request)
+        self.env.switch_to_django_root(request)
         if not context:
             context = template.RequestContext(request, {})
         req = DjangoRequest(self.env, request, context, placeholder)
@@ -533,7 +549,7 @@ class Markup(markup_plugins.MarkupBase):
         return trac_urls + urls
 
     def serve_trac_path(self, request, path):
-        self.env.set_abs_href(request)
+        self.env.switch_to_trac_root(request)
         context = template.RequestContext(request, {})
         req = DjangoRequest(self.env, request, context, None)
 
