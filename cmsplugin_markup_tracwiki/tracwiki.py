@@ -162,7 +162,7 @@ class DjangoRequestDispatcher(main.RequestDispatcher):
     pass
 
 class DjangoRequest(web.Request):
-    def __init__(self, env, request, context, placeholder):
+    def __init__(self, env, request, context=None, placeholder=None):
         super(DjangoRequest, self).__init__(request.META, self._start_response)
 
         # We override request's hrefs from environment (which are based on Django's URLs)
@@ -171,7 +171,12 @@ class DjangoRequest(web.Request):
 
         self.django_request = request
         self.django_context = context
-        self.django_placeholder = placeholder
+        if placeholder:
+            self.django_placeholder = placeholder
+        elif context:
+            self.django_placeholder = context.get('placeholder')
+        else:
+            self.django_placeholder = None
         self.django_response = None
         
         self.perm = main.FakePerm()
@@ -495,7 +500,8 @@ class Markup(markup_plugins.MarkupBase):
     text_enabled_plugins = True
     is_dynamic = True
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, formatter=DjangoFormatter, *args, **kwargs):
+        self._formatter = formatter
         self.env = DjangoEnvironment()
         self.scripts = []
         self.links = {}
@@ -510,7 +516,7 @@ class Markup(markup_plugins.MarkupBase):
         ctx = mimeview.Context.from_request(req, res)
         out = StringIO()
         self._early_scripts_and_links(req)
-        DjangoFormatter(self.env, ctx).format(value, out)
+        self._formatter(self.env, ctx).format(value, out)
         self._all_scripts_and_links(req)
         return out.getvalue()
 
