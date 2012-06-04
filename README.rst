@@ -16,8 +16,11 @@ and add ``cmsplugin_markup_tracwiki`` to ``CMS_MARKUP_OPTIONS``. You should of c
 Trac installed and an otherwise working Django CMS installation. Plugin was tested with 0.12 Trac
 version.
 
-At the moment it requires ``cmsplugin-markup`` plugin with my changes, available
-`here <https://bitbucket.org/mitar/cmsplugin-markup/>`_.
+You should include in your ``urls.py`` plugins URLs, for example::
+
+    urlpatterns = patterns('',
+        # ...
+        url(r'^', include('cmsplugin_markup.urls')),
 
 ***********
 Wiki Syntax
