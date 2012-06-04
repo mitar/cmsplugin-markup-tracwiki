@@ -1,3 +1,6 @@
+from __future__ import with_statement
+
+import contextlib
 import functools
 import inspect
 import os
@@ -81,10 +84,36 @@ def temporary_switch_to_trac_root(f):
     @functools.wraps(f)
     def wrapper(req, *args, **kwargs):
         orig_href = req.href
-        req.href = web.href.Href(tracwiki_base_path())
-        f(req, *args, **kwargs)
-        req.href = orig_href
+        try:
+            req.href = web.href.Href(tracwiki_base_path())
+            return f(req, *args, **kwargs)
+        finally:
+            req.href = orig_href
     return wrapper
+
+@contextlib.contextmanager
+def django_root(formatter):
+    formatter_env_href = formatter.env.href
+    formatter_href = formatter.href
+    try:
+        formatter.env.switch_to_django_root()
+        formatter.href = formatter.env.href
+        yield
+    finally:
+        formatter.env.href = formatter_env_href
+        formatter.href = formatter_href
+
+@contextlib.contextmanager
+def trac_root(formatter):
+    formatter_env_href = formatter.env.href
+    formatter_href = formatter.href
+    try:
+        formatter.env.switch_to_trac_root()
+        formatter.href = formatter.env.href
+        yield
+    finally:
+        formatter.env.href = formatter_env_href
+        formatter.href = formatter_href
 
 # Those two methods should always use trac root
 trac_chrome.add_stylesheet = temporary_switch_to_trac_root(trac_chrome.add_stylesheet)
@@ -140,16 +169,14 @@ class DjangoEnvironment(test.EnvironmentStub):
 
     def switch_to_django_root(self, request=None):
         self.href = web.href.Href(urlresolvers.reverse('pages-root'))
-
         if request:
             self._set_abs_href(request)
 
     def switch_to_trac_root(self, request=None):
         self.href = web.href.Href(tracwiki_base_path())
-
         if request:
             self._set_abs_href(request)
-    
+
     def get_templates_dir(self):
         return getattr(settings, 'CMS_MARKUP_TRAC_TEMPLATES_DIR', super(DjangoEnvironment, self).get_templates_dir())
 
@@ -257,8 +284,9 @@ class DjangoFormatter(wiki.formatter.Formatter):
         return (depth, heading, anchor)
     
     def _make_lhref_link(self, match, fullmatch, rel, ns, target, label):
-        """We override _make_lhref_link to make 'cms' namespace default."""
-        return super(DjangoFormatter, self)._make_lhref_link(match, fullmatch, rel, ns or 'cms', target, label)
+        # We override _make_lhref_link to make 'cms' namespace default and Django root
+        with django_root(self):
+            return super(DjangoFormatter, self)._make_lhref_link(match, fullmatch, rel, ns or 'cms', target, label)
 
     def _make_ext_link(self, url, text, title=''):
         # TODO: Make configurable which links are external, currently we do not render external links any differently than internal
@@ -508,7 +536,7 @@ class Markup(markup_plugins.MarkupBase):
 
     def parse(self, value, context=None, placeholder=None):
         request = _get_django_request(context=context)
-        self.env.switch_to_django_root(request)
+        self.env.switch_to_trac_root(request)
         if not context:
             context = template.RequestContext(request, {})
         req = DjangoRequest(self.env, request, context, placeholder)
