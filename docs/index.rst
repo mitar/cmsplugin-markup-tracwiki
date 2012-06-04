@@ -127,7 +127,6 @@ Example::
 wiki syntax. Useful when you are including wiki content inside some other
 content with existing headings. Default is 1 which means that ``= Heading =``
 becomes ``<h2>Heading</h2>``. Setting it to 0 disables this feature.
-(env_cms)root@implicator:/srv/cms/sources/cmsplugin-markup-tracwiki/docs# 
 
 Source Code and Issue Tracker
 -----------------------------
@@ -135,7 +134,7 @@ Source Code and Issue Tracker
 For development Bitbucket_ is used, so source code and issue tracker is found
 there_.
 
-.. _GitHub: https://bitbucket.org/
+.. _Bitbucket: https://bitbucket.org/
 .. _there: https://bitbucket.org/mitar/cmsplugin-markup-tracwiki
 
 Indices and tables
