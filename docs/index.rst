@@ -21,12 +21,6 @@ You should just install it somewhere Django can find it, add
 also have Trac installed and an otherwise working Django CMS installation.
 Plugin was tested with 0.12 Trac version.
 
-You should include in your ``urls.py`` plugins URLs, for example::
-
-    urlpatterns = patterns('',
-        # ...
-        url(r'^', include('cmsplugin_markup.urls')),
-
 Wiki Syntax
 -----------
 
