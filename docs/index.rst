@@ -64,6 +64,16 @@ was inserted into the wiki markup. Probably you should not use it manually.
 Additional macros or other features can be added on request. Or you can just
 clone the repository and implement them yourself and send me a pull request.
 
+Template Tags
+-------------
+
+If you want to process Trac links (Trac link syntax) in Django templates, you
+can use ``tracwiki_link`` Django template tag from ``tracwiki`` template tags
+library::
+
+    {% load tracwiki %}
+    <a href="{% tracwiki_link "cms:admin:index" %}">Admin main page</a>
+
 Settings
 --------
 

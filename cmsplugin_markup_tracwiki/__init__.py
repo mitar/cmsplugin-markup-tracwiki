@@ -1,1 +1,1 @@
-from cmsplugin_markup_tracwiki.tracwiki import *
+from cmsplugin_markup_tracwiki.tracwiki import Markup

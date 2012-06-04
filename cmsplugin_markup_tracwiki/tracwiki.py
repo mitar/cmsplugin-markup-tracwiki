@@ -528,13 +528,14 @@ class Markup(markup_plugins.MarkupBase):
     text_enabled_plugins = True
     is_dynamic = True
 
-    def __init__(self, formatter=DjangoFormatter, *args, **kwargs):
-        self._formatter = formatter
+    _formatter = DjangoFormatter
+
+    def __init__(self, *args, **kwargs):
         self.env = DjangoEnvironment()
         self.scripts = []
         self.links = {}
 
-    def parse(self, value, context=None, placeholder=None):
+    def _prepare_environment(self, context=None, placeholder=None):
         request = _get_django_request(context=context)
         self.env.switch_to_trac_root(request)
         if not context:
@@ -542,8 +543,12 @@ class Markup(markup_plugins.MarkupBase):
         req = DjangoRequest(self.env, request, context, placeholder)
         res = DjangoResource('cms', 'pages-root') # TODO: Get ID from request (and version?)
         ctx = mimeview.Context.from_request(req, res)
-        out = StringIO()
         self._early_scripts_and_links(req)
+        return ctx, req
+
+    def parse(self, value, context=None, placeholder=None):
+        ctx, req = self._prepare_environment(context, placeholder)
+        out = StringIO()
         self._formatter(self.env, ctx).format(value, out)
         self._all_scripts_and_links(req)
         return out.getvalue()
