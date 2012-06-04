@@ -605,7 +605,11 @@ class Markup(markup_plugins.MarkupBase):
         if req._response:
             req.django_response._container = req._response
             req.django_response._is_string = False
-        
+
+        if isinstance(req.django_response.status_code, basestring):
+            # Django expects integer status codes
+            req.django_response.status_code = int(req.django_response.status_code.split()[0])
+
         return req.django_response
 
     def replace_plugins(self, text, id_dict):
