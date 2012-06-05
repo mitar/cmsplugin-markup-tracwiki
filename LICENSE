@@ -31,8 +31,8 @@ This program may contain, use, link to and/or distribute also parts under third
 party copyright with possibly different licensing conditions. Make sure you
 check and respect also those conditions.
 
-Some program code is based also on code from Trac <http://trac.edgewall.org/>.
-The following BSD license applies.
+Some program code is based on code from Trac <http://trac.edgewall.org/>. The
+following BSD license applies.
 
 Copyright (C) 2003-2012 Edgewall Software
 All rights reserved.
