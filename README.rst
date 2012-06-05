@@ -1,3 +1,6 @@
+cmsplugin-markup-tracwiki
+=========================
+
 A plugin for `cmsplugin-markup`_ which adds Trac_ wiki engine support to
 `Django CMS`_. It enables you to have content in Trac wiki syntax. It also
 supports Trac macros and it is also integrated with `django-filer`_ and
