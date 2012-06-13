@@ -67,12 +67,18 @@ clone the repository and implement them yourself and send me a pull request.
 Template Tags
 -------------
 
+If you want to render Trac syntax in Django templates, you can use ``tracwiki``
+Django template tag from ``tracwiki`` template tags library::
+
+    {% load tracwiki %}
+    {% tracwiki object.trac_content %}
+
 If you want to process Trac links (Trac link syntax) in Django templates, you
 can use ``tracwiki_link`` Django template tag from ``tracwiki`` template tags
 library::
 
     {% load tracwiki %}
-    <a href="{% tracwiki_link "cms:admin:index" %}">Admin main page</a>
+    <a href="{% tracwiki_link "filer:original-filename.png" %}">File</a>
 
 Settings
 --------
