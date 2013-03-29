@@ -7,7 +7,7 @@ macros and it is also integrated with `django-filer`_ and `cmsplugin-blog`_.
 You can easily (with GUI) add files and images to the content, or any other
 text-enabled plugin content.
 
-.. _cmsplugin-markup: https://bitbucket.org/mitar/cmsplugin-markup
+.. _cmsplugin-markup: https://github.com/mitar/cmsplugin-markup-tracwiki
 .. _Trac: http://trac.edgewall.org/
 .. _django-filer: https://github.com/stefanfoulis/django-filer
 .. _cmsplugin-blog: https://github.com/fivethreeo/cmsplugin-blog
@@ -141,11 +141,11 @@ becomes ``<h2>Heading</h2>``. Setting it to 0 disables this feature.
 Source Code and Issue Tracker
 -----------------------------
 
-For development Bitbucket_ is used, so source code and issue tracker is found
+For development GitHub_ is used, so source code and issue tracker is found
 there_.
 
-.. _Bitbucket: https://bitbucket.org/
-.. _there: https://bitbucket.org/mitar/cmsplugin-markup-tracwiki
+.. _GitHub: https://github.com
+.. _there: https://github.com/mitar/cmsplugin-markup-tracwiki
 
 Indices and tables
 ==================
